@@ -301,6 +301,17 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 代价是：scoop 卸载、迁移盘符或 `current` 重建期间，IDM 的钩子会静默失败（IDM 只记一条 CreateProcess 错误）。
 
 IDM 会对**每一次**下载完成都调用它，脚本靠任务文件区分：没有对应任务的（非 GitHub 下载）静默退出，不弹通知、不写记录。
+
+这份配置存在 `HKCU\Software\DownloadManager` 的两个值里：`VScannerProgram`（解释器）与 `VScannerParameters`（参数）。
+随时可以自检：
+
+```powershell
+npm run check:idm
+```
+
+它会核对解释器是否存在、`-File` 指向的脚本是否存在、脚本哈希是否与基线一致、`[File]` 有没有被弄丢，
+并特别检查**值尾部有没有多余换行**——从聊天窗口复制路径时极易带上，而带换行的路径调用 CreateProcess 会
+直接 ENOENT，表现为「配置看着正常但钩子从不触发」。
 建议把脚本放在 `%LOCALAPPDATA%\MirrorFastlane\` 而不是仓库目录——仓库移动或重新 clone 不影响挂载；
 更新脚本时覆盖过去，再跑一次 `check-integrity.ps1` 确认基线一致。
 
