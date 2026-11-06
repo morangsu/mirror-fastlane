@@ -196,6 +196,73 @@ eq('校验值前缀剥离', MFL.stripSha256Prefix('sha256:' + H), H);
 eq('校验值合法判断', MFL.isValidSha256(H), true);
 eq('校验值长度不足', MFL.isValidSha256('abc'), false);
 
+// 下载直链里的 tag 必须留住，否则会退化成"最新版"，老版本被拿新版的哈希去比
+const dl = MFL.parseReleaseUrl('https://github.com/o/r/releases/download/v1.0.0/foo-1.0.0.zip');
+eq('直链 owner', dl.owner, 'o');
+eq('直链保留 tag', dl.tag, 'v1.0.0');
+eq('直链标记为 download', dl.kind, 'download');
+const dlLatest = MFL.parseReleaseUrl('https://github.com/o/r/releases/latest/download/foo.zip');
+eq('latest 直链 tag 为空', dlLatest.tag, null);
+eq('latest 直链标记为 download', dlLatest.kind, 'download');
+eq('页面 URL 标记为 page', rel.kind, 'page');
+eq('latest 页面可识别',
+  MFL.parseReleaseUrl('https://github.com/o/r/releases/latest') !== null, true);
+eq('含斜杠的 tag 也能还原',
+  MFL.parseReleaseUrl('https://github.com/o/r/releases/download/release/1.0/a.zip').tag, 'release/1.0');
+
+/* ----------------------- 8.5 期望哈希的资产定位 ----------------------- */
+
+group('8.5 资产定位');
+
+// 用一个假的 fetch 路由，验证"认 tag"和"拒绝猜"这两件事
+const realFetch = globalThis.fetch;
+const calls = [];
+globalThis.fetch = async (url) => {
+  const u = String(url);
+  calls.push(u);
+  const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
+  if (u.includes('/releases/tags/v1.0.0')) {
+    return json({
+      tag_name: 'v1.0.0',
+      assets: [
+        { id: 101, name: 'foo-1.0.0.zip', size: 1234, digest: 'sha256:' + H },
+        { id: 102, name: 'foo-1.0.0.zip.sha256', size: 90, digest: 'sha256:' + 'b'.repeat(64) },
+      ],
+    });
+  }
+  if (u.includes('/releases/tags/v2.0.0')) {
+    return json({ tag_name: 'v2.0.0', assets: [{ id: 201, name: 'foo-2.0.0.zip', size: 4321, digest: 'sha256:' + 'c'.repeat(64) }] });
+  }
+  if (u.includes('/releases?per_page=')) {
+    return json([{ tag_name: 'v2.0.0', assets: [{ id: 201, name: 'foo-2.0.0.zip', size: 4321, digest: 'sha256:' + 'c'.repeat(64) }] }]);
+  }
+  return { ok: false, status: 404, json: async () => null, text: async () => '' };
+};
+
+try {
+  const r1 = await GHH.resolveExpected('https://github.com/o/r/releases/download/v1.0.0/foo-1.0.0.zip', '', MFL);
+  eq('老版本直链取到的是该 tag 的哈希', r1.hash, H);
+  eq('回源锚点带 tag', r1.tag, 'v1.0.0');
+  eq('回源锚点带资产 id', r1.assetId, 101);
+  eq('回源锚点带字节数', r1.size, 1234);
+  ok('查的是 /releases/tags/v1.0.0 而不是最新版',
+    calls.some(u => u.includes('/releases/tags/v1.0.0')) && !calls.some(u => u.includes('per_page')),
+    calls.join(' | '));
+
+  const r2 = await GHH.resolveExpected('https://github.com/o/r/releases/tag/v2.0.0', '', MFL);
+  eq('单个资产的页面可以定位', r2.hash, 'c'.repeat(64));
+
+  let e1 = null;
+  try { await GHH.resolveExpected('https://github.com/o/r/releases/tag/v1.0.0', '', MFL); } catch (e) { e1 = e; }
+  ok('多资产页面拒绝瞎猜', !!e1 && /2 个资产/.test(e1.message), e1 && e1.message);
+
+  let e2 = null;
+  try { await GHH.resolveExpected('https://github.com/o/r/releases/download/v1.0.0/nope.zip', '', MFL); } catch (e) { e2 = e; }
+  ok('文件名对不上时明确报错', !!e2 && /没有名为 nope\.zip/.test(e2.message), e2 && e2.message);
+} finally {
+  globalThis.fetch = realFetch;
+}
+
 /* --------------------------- 9. 清单与文件完整性 --------------------------- */
 
 group('9. 清单与文件');

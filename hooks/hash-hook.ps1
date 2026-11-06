@@ -571,20 +571,55 @@ function Get-RemoteAsset {
     if ($tok) { $headers['Authorization'] = "Bearer $tok" }
 
     # 地址前缀写死，任务文件无法把请求引到别的主机
+    #
+    # 查询顺序很重要：有数字资产 id 时先按 id 精确查。
+    # 同一仓库的多个 release 里常出现同名资产（foo.zip 每个版本都有），
+    # 按 id 查才能保证拿到的是"这一个资产",而不是别的版本的同一个名字。
+    $uris = @()
+    if ($AssetId -gt 0) {
+        $uris += ('{0}/repos/{1}/releases/assets/{2}' -f $script:ApiBase, $Repo, $AssetId)
+    }
     if ($Tag) {
-        $uri = '{0}/repos/{1}/releases/tags/{2}' -f $script:ApiBase, $Repo, [uri]::EscapeDataString($Tag)
+        $uris += ('{0}/repos/{1}/releases/tags/{2}' -f $script:ApiBase, $Repo, [uri]::EscapeDataString($Tag))
     } else {
-        $uri = '{0}/repos/{1}/releases?per_page=5' -f $script:ApiBase, $Repo
+        $uris += ('{0}/repos/{1}/releases?per_page=5' -f $script:ApiBase, $Repo)
     }
 
     $resp = $null
-    try {
-        try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
-        $resp = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec $NetTimeoutSec -ErrorAction Stop
-    } catch {
-        $msg = $_.Exception.Message
+    $single = $false
+    $lastErr = ''
+    foreach ($uri in $uris) {
+        try {
+            try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+            $resp = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec $NetTimeoutSec -ErrorAction Stop
+            $single = ($uri -match '/releases/assets/')
+            break
+        } catch {
+            $resp = $null
+            $lastErr = $_.Exception.Message
+        }
+    }
+
+    if (-not $resp) {
+        $msg = $lastErr
         if ($msg -match '40[13]|429') { $msg = 'API 限速或凭证不足' }
         $r = New-TrustResult 'unavailable' -Note ("回源失败：" + $msg)
+        $script:RemoteCache[$key] = $r
+        return $r
+    }
+
+    # 按 id 查回来的是单个资产对象，直接就是命中项
+    if ($single) {
+        $size = 0
+        try { $size = [long]$resp.size } catch { }
+        $digest = [string]$resp.digest
+        if ($digest -and $digest -match '^sha256:([a-f0-9]{64})$') {
+            Write-Log ("回源命中资产 id={0}（按 id 精确查）" -f $AssetId)
+            $r = New-TrustResult 'ok' -Digest $Matches[1].ToLower() -Size $size
+            $script:RemoteCache[$key] = $r
+            return $r
+        }
+        $r = New-TrustResult 'nodigest' -Size $size -Note 'GitHub 未提供该资产的 digest'
         $script:RemoteCache[$key] = $r
         return $r
     }

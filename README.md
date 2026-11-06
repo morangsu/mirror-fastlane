@@ -128,6 +128,25 @@ IDM 默认按类型分类存放（`Archives/`、`Programs/`、`Documents/`、`Im
 `outbox.txt` 第 5 段记录可信度，校验页会显示徽章：`已回源复核` / `未复核` / `来源冲突` / `仅本地值`。
 旧格式（4 段）仍然能读，只是没有徽章。
 
+#### 同名资产、多个版本怎么区分
+
+同一仓库的不同 release 常放同名文件（`foo.zip` 每个版本放一个），同一个 release 里也可能并列多个版本
+（`foo-1.0.0.zip` / `foo-1.1.0.zip`）。三道闸门：
+
+1. **URL 里的 tag**：`/releases/download/v1.0.0/foo.zip` 的 tag 必须解析出来。丢掉它就会退化成「查最新版」，
+   然后拿新版的哈希去比老版本的文件——1.3.1 修的就是这个（之前 `download` 形态的 tag 被丢弃了）。
+2. **资产 id**：任务文件里带 `assetId`（数字，永不变）。回源时直接 `GET /releases/assets/<id>`，
+   同名也认不错；只有按 id 查不到（资产被删）才退到「按 tag 找 release、按名字找资产」。
+3. **拒绝猜**：粘 release 页面而该 release 有多个资产时直接报错，要求给具体文件的直链，
+   不会把某个资产的哈希安到目标文件头上。
+
+| 你给的东西 | 能定位到什么 |
+|---|---|
+| `…/releases/tag/v1.0.0` 且该 release 只有 1 个资产 | 该资产 |
+| `…/releases/tag/v1.0.0` 且有多个资产 | 报错，要求直链 |
+| `…/releases/download/v1.0.0/foo.zip` | 精确到 tag + 文件名，回源再精确到 assetId |
+| `…/releases/latest/download/foo.zip` | 最新 release 里的 foo.zip |
+
 完全不想联网：给脚本加 `-NoNet`，回源整段跳过，行为退化成"只信任务文件"并如实标注。
 
 #### 它挡不住什么（别高估）

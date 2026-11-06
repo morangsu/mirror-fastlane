@@ -118,6 +118,7 @@ const dirs = [];function makeCase(tag, name, expected, size, buf, meta) {
     const r = runHook(d);
     ok('脚本正常退出', r.status === 0, String(r.status));
     ok('日志显示已回源复核一致', /已回源 GitHub API 复核一致/.test(r.out), r.out.split('\n').slice(-4).join(' | '));
+    ok('按资产 id 精确回源（不会被同名资产的其它版本顶掉）', /按 id 精确查/.test(r.out), r.out.split('\n').slice(-5).join(' | '));
     ok('outbox 记录了 ok', /\|ok\|/.test(r.outbox), r.outbox.slice(0, 120));
     ok('outbox 标记为已回源复核', /\|pass$/.test(r.outbox), r.outbox.slice(-40));
     ok('任务文件已消费', !existsSync(join(d, '_mfl-tasks', asset.name + '.task.json')));
