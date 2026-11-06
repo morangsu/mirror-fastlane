@@ -1,126 +1,118 @@
-# 权限与隐私申报（Partner Center → Privacy）
+# Partner Center · Privacy 页逐框填写
 
-> Edge 的 Privacy 页会逐项问「为什么需要这个权限」。下面是可直接粘贴的答案，中英各一份，英文版给国际审核员更稳妥。
+> 对应截图里的 7 个输入框，全部英文（审核员看英文更稳），每框都在 1000 字符以内。
+> 直接整段复制，不要带反引号或列表符号之外的格式。
 
-## 1. 单一用途（Single purpose）
+### Single purpose description
 
-**中文**
 ```
-把 GitHub 的下载链接改写到用户选定的镜像，并在页面上标明这次请求由哪个镜像服务。
-```
+Mirror Fastlane has exactly one purpose: when the user opens a GitHub download link (release asset or source archive), the extension rewrites that request to a mirror host — one the user has added, or one the extension has measured as reachable — and shows on the page which mirror is serving the file.
 
-**English**
-```
-Rewrite GitHub download links to a mirror the user has chosen, and label on the page which mirror is serving the request.
+It does nothing beyond that: it does not proxy browsing or change the user's IP, it does not modify page content except inserting a small "mirror" badge next to download links, it collects no data, and it runs on no site other than GitHub.
 ```
 
-## 2. 是否收集或传输用户数据
+（543 字符）
 
-**回答：否（No）**
+### storage justification
 
-- 无账号体系、无遥测、无分析、无崩溃上报、无远程日志。
-- 不读取浏览历史、不读取页面内容（仅在 github.com 页面上插入一个可见徽章，不改动原有 DOM 结构）。
-- 唯一可能的外发请求见下表，全部由用户操作触发。
-
-| 什么时候会发请求 | 发往哪里 | 内容 |
-|---|---|---|
-| 打开 GitHub 页面且开启测速 | 用户自己添加/内置的镜像域名 | 一个固定的测试文件地址（ripgrep 的一个 release 资产），仅用于测速；不发任何本地数据 |
-| 开启哈希校验后点击下载 | `https://api.github.com` | 仓库与 release 路径；只读 GET，取官方 SHA-256 |
-| 用户开启远程清单并手动获取 | 用户自己填写的 URL | 只读 GET |
-| 可选：本地脚本回源复核 | `https://api.github.com` | 资产 id；只读 GET |
-
-## 3. 远程代码（Remote code）
-
-**回答：否**
-
-所有可执行代码都在扩展包内。远程清单（可选）只按 JSON 解析，字段白名单校验，不执行任何内容，不使用 `eval` / `new Function` / 远程 `<script>`。
-（测试里有对应断言：扫描全部源文件，发现 `eval`、`new Function`、远程脚本或硬编码令牌即失败。）
-
-## 4. 权限逐项理由
-
-### `storage`
 ```
-保存本机设置、镜像列表和最近一次测速结果。全部只存在浏览器本地，不上传。
-```
-```
-Stores settings, the mirror list and the latest probe results locally. Nothing leaves the device.
+Stores the extension's own configuration and measurement state on the user's device: on/off switch, probe mode and interval, optional active-hours window, optional hash-verification flags and a user-supplied read-only GitHub token, the mirror list (built-in plus any mirrors the user added), and the last measured speed/latency per mirror.
+
+All of it lives in browser-local storage; nothing is uploaded, synced or shared. Without this permission the extension would forget the user's configuration and mirror ranking on every restart, and the "one click to enable" flow could not work.
 ```
 
-### `alarms`
+（585 字符）
+
+### alarms justification
+
 ```
-只在用户选择「定时测速」时用于调度；默认的「仅按需」模式不使用定时器。
-```
-```
-Used only when the user picks scheduled probing; the default on-demand mode does not use timers.
+Used only for timing local housekeeping, never for background network work of its own:
+
+- when the user explicitly selects the "scheduled" probe mode, to trigger a speed test every N minutes (minimum 15);
+- a 5-minute tick that re-evaluates the active-hours boundary, so rewriting starts and stops on time instead of waiting for the next page load.
+
+The default "on-demand" mode uses no timers at all.
 ```
 
-### `downloads`
+（401 字符）
+
+### downloads justification
+
 ```
-仅用于写作校验任务：把几十字节的 JSON 写进下载目录下的 _mfl-tasks 子目录，交给本地脚本读取。
-不读取、不列举、不删除用户的下载内容；该功能默认关闭。
-```
-```
-Used only to write a small verification task file (a few dozen bytes of JSON) into the _mfl-tasks
-subfolder of the download directory, for a companion local script to read. It never reads, lists or
-deletes the user's downloads. The feature is off by default.
+Used for one narrow thing: writing a verification task file.
+
+When the user enables the optional hash-verification feature and clicks a GitHub download, the extension saves a few-dozen-byte JSON file (filename, expected SHA-256, repository, tag, asset id) into a dedicated "_mfl-tasks" subfolder of the browser's download directory. A companion local script, which the user installs separately, reads that file after the download finishes and compares the hash.
+
+The extension never reads, lists, moves or deletes the user's downloads. The feature is off by default, and the permission is not used for anything else.
 ```
 
-### `declarativeNetRequest`
+（616 字符）
+
+### declarativeNetRequest justification
+
 ```
-把匹配 GitHub release / 源码包格式的请求重定向到镜像。规则由扩展在本地生成，不读取请求内容、
-不注入脚本、不修改响应体。
-```
-```
-Redirects requests that match the GitHub release / source-archive URL patterns to a mirror. Rules are
-generated locally; the extension does not read request contents, inject scripts, or modify responses.
+Used to perform the extension's single purpose: redirecting requests whose URL matches GitHub release-asset or codeload archive patterns to the chosen mirror, e.g.
+https://github.com/o/r/releases/download/v1/a.zip  →  https://<mirror>/https://github.com/o/r/releases/download/v1/a.zip
+
+The rules are generated locally at runtime from the user's mirror list and the measured ranking (1-2 rules total). The extension does not read request bodies, does not inject scripts and does not modify responses; there is no static ruleset that could affect other sites. Without this permission the extension cannot function.
 ```
 
-### 主机权限 `https://github.com/*`
+（612 字符）
+
+### Host permission justification
+
 ```
-1) 在 release 页面给下载链接加一个「镜像」徽章（内容脚本，仅此页面）；
-2) 让下载链接的改写覆盖 github.com 上的请求。
-```
-```
-1) Add a "mirror" badge next to download links on release pages (content script, this domain only);
-2) Let the redirect rules cover requests originating on github.com.
+Required hosts — the only two the extension touches automatically:
+
+• https://github.com/* — (a) the content script that inserts a "mirror" badge next to release download links and shows a click toast; (b) so the redirect rules apply to requests initiated on github.com.
+• https://codeload.github.com/* — the same rewriting for source archives (feature off by default).
+
+Optional host permission https://*/* is NOT granted at install. It is requested per-origin from the options page, only for mirror domains the user adds, and only to run speed tests against them. Declining it does not break the core feature: rewriting works without host access to the mirror, the extension simply cannot rank mirrors automatically.
 ```
 
-### 主机权限 `https://codeload.github.com/*`
-```
-同样的改写，用于源码包（/archive/ 与 codeload 直链）。该功能默认关闭。
-```
-```
-The same rewriting for source archives (codeload URLs). Off by default.
-```
+（718 字符）
 
-### 可选主机权限 `https://*/*`
+### Justification（Remote code = No 时）
+
 ```
-仅用于测速与改写用户自己添加的镜像域名。每一项都需要用户在设置页逐个点击授权；
-拒绝授权不影响核心功能——改写本身不需要访问镜像站点的权限，只是无法自动测速排序。
-```
-```
-Only for speed-testing and rewriting mirror domains that the user adds. Each origin is requested
-individually from the settings page. Declining does not break the core feature: rewriting itself does
-not need host access to the mirror, the extension just cannot rank mirrors automatically.
+No remote code. Every executable line ships inside the package: no eval, no new Function, no remote <script>, no runtime-fetched WASM.
+
+The only remote data is an optional mirror list, which is parsed as JSON with a field whitelist (https URLs only) and never executed. A repository test scans all sources and fails if eval / new Function / remote script tags / hardcoded tokens appear.
 ```
 
-## 5. Cookie / 跟踪 / 广告
+（386 字符）
 
-全部为否。扩展不设置 cookie，不读取 cookie，不含任何广告或联盟链接。
+---
 
-## 6. 认证信息
+## 填写要点（避免被打回）
 
-可选填写 GitHub 个人访问令牌（只读、仅公共仓库），用于把 API 限额从 60 次/小时提到 5000 次/小时。
-令牌明文保存在浏览器的 `storage.local`，只发送给 `api.github.com`，不经过任何第三方。
-不填也能正常工作（只是限额低）。
+1. **单一用途**只写"一件事"，不要顺带说测速、校验、远程清单——那些是支撑手段，写在权限理由里。
+2. **每个权限都必须回答"为什么非它不可"**，而不是"它能干什么"。所以每条都写了"没有它会怎样"。
+3. **Host permission 一栏要覆盖三类**：两个必需域 + 可选的 `https://*/*`。审核最容易在这里追问，必须说清"可选、逐域授权、拒绝不影响核心功能"。
+4. **远程代码选 No**，并在 Justification 里给出可核查的证据（"仓库里有测试会扫描 eval / 远程脚本"）。
+5. 不要出现"加速 10 倍""更快"这类无法验证的表述。
 
-## 7. 内容脚本范围
+## 参考：真实数据流（审核追问时备用）
 
-只在 `https://github.com/*` 上运行，`document_idle` 注入，作用限于：插入徽章元素、监听对 release 链接的点击并弹一条提示。
-不修改页面原有内容，不读取表单、不拦截输入。
+| 触发条件 | 目标 | 内容 | 是否含用户数据 |
+|---|---|---|---|
+| 打开 GitHub 页面 + 用户开启测速 | 用户添加/内置的镜像域 | 固定测试资产地址的 Range 请求 | 否 |
+| 用户开启哈希校验后点下载 | `https://api.github.com` | 仓库/release 路径，只读 GET | 否（可选 Token 仅发往此处） |
+| 用户开启远程清单并手动获取 | 用户自填 URL | 只读 GET | 否 |
+| 本地脚本回源复核（可选） | `https://api.github.com` | 资产 id，只读 GET | 否 |
 
-## 8. 已知限制（主动申明，减少审核来回）
+## 参考：中文版（自查用，不必贴进表单）
 
-- 不改写浏览器之外的请求：如果你把链接粘给 IDM 之类的下载器，扩展管不到。
-- 镜像由第三方运营，扩展只负责选择与标注；文件是否可信由哈希校验（可选）负责。
-- 单个请求只会走一个镜像（DNR 没有请求级回退），镜像失效要等下一轮测速才会被换掉。
+- 单一用途：把 GitHub 下载链接改写到用户选定的镜像，并在页面上标明这次由谁服务。
+- storage：存本机设置、镜像列表与测速结果，不上传。
+- alarms：只用于定时测速与生效时段边界校正，默认模式不用定时器。
+- downloads：仅写一个几十字节的校验任务文件到下载目录的 _mfl-tasks 子目录，不读不删用户下载，默认关闭。
+- declarativeNetRequest：把匹配 GitHub release / 源码包格式的请求重定向到镜像，本地生成 1~2 条规则，不读请求体、不改响应。
+- 主机权限：github.com 用于插入徽章并让改写覆盖该域请求；codeload 用于源码包（默认关）；可选 `https://*/*` 逐域授权、仅用于测速，拒绝不影响改写。
+- 远程代码：无，全部代码在包内，远程清单只当 JSON 解析。
+
+## 已知限制（主动申明，减少来回）
+
+- 不改写浏览器之外的请求（例如粘贴给 IDM 的原链）。
+- 镜像由第三方运营，扩展只负责选择与标注。
+- 单个请求只走一个镜像（DNR 无请求级回退），失效要等下一轮测速。
