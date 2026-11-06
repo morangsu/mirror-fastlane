@@ -207,7 +207,9 @@
     </div>
   </div>
   <div class="warnbox" style="margin-top:10px">
-    哈希校验的「自动回报」依赖一个独立脚本，<b>不随扩展打包</b>。请在扩展仓库的 <code>hooks/</code> 目录自行下载并阅读源码后再使用。
+    哈希校验的「自动回报」依赖一个独立脚本，<b>不随扩展打包</b>。请在
+    <a href="https://github.com/morangsu/mirror-fastlane/releases/latest" target="_blank" rel="noopener">release 页</a>
+    的 <code>hooks/</code> 目录自行下载并阅读源码后再使用。
     该脚本会把任务文件里的哈希回源 <code>api.github.com</code> 复核一次（只读 GET，可用 <code>-NoNet</code> 关闭），
     目的是不让磁盘上可被改写的任务文件成为唯一依据。<b>请自行审查其安全性与可靠性</b>。
   </div>

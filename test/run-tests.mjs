@@ -334,6 +334,7 @@ for (const f of files) {
   if (/new\s+Function\s*\(/.test(src)) bad.push([f, 'new Function']);
   if (/<script[^>]+src\s*=\s*["']https?:/i.test(src)) bad.push([f, '远程脚本']);
   if (/github_pat_[A-Za-z0-9_]{20,}/.test(src)) bad.push([f, '疑似硬编码 Token']);
+  if (/ghp_[A-Za-z0-9]{30,}/.test(src)) bad.push([f, '疑似硬编码经典 Token']);
   if (/document\.write\s*\(/.test(src)) bad.push([f, 'document.write']);
 }
 ok('无远程代码 / eval / 硬编码 Token', bad.length === 0, JSON.stringify(bad));

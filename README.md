@@ -293,21 +293,47 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描（118 项）
 node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（23 项）
 node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（8 项）
-node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（17 项）
-node test/run-ps-tests.mjs     # 脚本逻辑：13 组用例、28 项断言（调用 PowerShell 跑）
+node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（18 项）
+node test/run-ps-tests.mjs     # 脚本逻辑：19 组用例、57 项断言（调用 PowerShell 跑）
 npx web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 ```
 
-`test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完 13 组用例：
+单元测试 148 项、脚本测试 57 项，合计 **254 项**。
+
+`test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完 19 组用例：
 
 ```
 任务+子文件夹 / 期望值不一致 / 无期望值 / 重命名副本 (1) / 多副本取最新 /
 旧文件不误判 / 覆盖同名 / 过期任务清理 / aria2 显式路径 / 失败回报 /
-跨目录配对 / 多任务并发 / 不误处理内部文件
+跨目录配对 / 多任务并发 / 不误处理内部文件 / 回源复核开关 / 字节数锚点 /
+来源合成 / 回源边界 / 脚本完整性自检 / 非 GitHub 下载不打扰
 ```
 
 `test/probe-*.mjs` 是针对浏览器能力的一次性探测脚本（下载协议兼容性、IDM 是否劫持、扩展能否写文件），
 会往真实下载目录写测试文件，不属于常规测试，请勿在无关环境运行。
+
+## 提交到商店
+
+两个商店都要求「无远程代码 + 可审查的源码」，这里的交付方式是一致的：
+
+| 商店 | 提交什么 | 说明 |
+|---|---|---|
+| Edge Add-ons | `dist/edge` 打成的 zip | 隐私政策 URL 用本仓库 `privacy.md`；权限说明见上表 |
+| Firefox AMO | `dist/firefox` 打成的 zip | manifest 已声明 `data_collection_permissions.required: ["none"]`；源码即本仓库，必要时可在 AMO 里指定"源码在仓库" |
+
+打包（不依赖第三方工具）：
+
+```powershell
+npm run build
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.0.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.0.zip -Force
+```
+
+`hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，
+设置页里链接到 release 页，用户自己下载并审查。
+
+**上架前请自查**：`manifest.json` 的 `gecko.id` 目前是占位值 `mirror-fastlane@example.com`，
+AMO 首次提交后不可更改，建议换成自己域名下的 id。
 
 ## 隐私
 
