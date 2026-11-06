@@ -55,7 +55,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$MaxWaitSeconds = 30
+$MaxWaitSeconds = 300
 $RecentMinutes = 30
 $TempExt = @('.tmp', '.part', '.partial', '.dwl', '.dwl2', '.aria2', '.!ut', '.crdownload', '.opdownload')
 $TaskFolderName = '_mfl-tasks'
@@ -310,6 +310,17 @@ function Find-FileByName {
         if ($hit) { return $hit }
     }
     return $null
+}
+
+function Get-CanonicalName {
+    # "foo (1).zip" 与 "foo.zip" 归一到同一个键：下载器遇到重名会自己加 (n)，
+    # 而任务文件里记的是原名，直接用文件名相等比较会漏掉。
+    param([string]$Name)
+    if (-not $Name) { return '' }
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($Name)
+    $ext = [System.IO.Path]::GetExtension($Name)
+    $base = [regex]::Replace($base, '\s+\(\d+\)$', '')
+    return ($base + $ext).ToLowerInvariant()
 }
 
 function Find-DownloadedFile {
@@ -816,7 +827,7 @@ try {
         if ($leaf) {
             foreach ($t in (Get-TaskFiles -Dirs $dirs)) {
                 $j = Read-TaskFile $t.File.FullName
-                if ($j -and $j.name -eq $leaf) { $hasTask = $true; break }
+                if ($j -and $j.name -and ((Get-CanonicalName $j.name) -eq (Get-CanonicalName $leaf))) { $hasTask = $true; break }
             }
         }
 
@@ -848,7 +859,8 @@ try {
         $taskHit = $false
         foreach ($t in (Get-TaskFiles -Dirs $dirs)) {
             $j = Read-TaskFile $t.File.FullName
-            if ($j -and $j.name -eq $leaf) {
+            # 下载器会把重名文件改叫 "名字 (1).zip"，任务里记的是原名，所以要按规范化名比
+            if ($j -and $j.name -and ((Get-CanonicalName $j.name) -eq (Get-CanonicalName $leaf))) {
                 # 命中任务就算"这次要管的下载"，即使扩展没取到期望哈希
                 $taskHit = $true
                 $taskFile = $t.File.FullName
@@ -896,6 +908,19 @@ try {
         # 先在任务文件所在的下载根下找，其次其它候选目录
         $searchOrder = @($t.Root) + @($dirs | Where-Object { $_ -ne $t.Root })
         $found = Find-DownloadedFile -Dirs $searchOrder -Name $name -TaskTs $taskTs
+
+        # 下载器回调可能比"改名到最终文件名"早一步（还叫 .part / 临时名），
+        # 任务刚写下时多等几秒再看一次，避免误判成"没下到"。
+        if (-not $found) {
+            $fresh = ((Get-Date) - $t.File.LastWriteTime).TotalSeconds -lt 120
+            if ($fresh) {
+                for ($i = 0; $i -lt 3 -and -not $found; $i++) {
+                    Start-Sleep -Milliseconds 1500
+                    $found = Find-DownloadedFile -Dirs $searchOrder -Name $name -TaskTs $taskTs
+                }
+                if ($found) { Write-Log "延迟命中: $($found.Name)" }
+            }
+        }
 
         if (-not $found) {
             $age = (Get-Date) - $t.File.LastWriteTime

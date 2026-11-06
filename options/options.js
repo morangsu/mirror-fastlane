@@ -347,11 +347,18 @@ $('fetchList').addEventListener('click', async () => {
   const REASON = {
     'not-enabled': '未启用远程清单',
     'no-url': '清单地址为空',
-    'all-failed': '所有来源都失败（镜像未授权或地址不可达）',
+    'all-failed': '所有来源都失败',
     disabled: '未启用远程清单',
   };
-  if (r && r.ok) toast('已通过 ' + r.via + ' 获取，新增 ' + r.added + ' 个');
-  else toast('获取失败：' + (REASON[r && r.reason] || (r && r.reason) || '未知'));
+  if (r && r.ok) {
+    toast('已通过 ' + r.via + ' 获取，新增 ' + r.added + ' 个');
+  } else {
+    let msg = REASON[r && r.reason] || (r && r.reason) || '未知';
+    if (r && Array.isArray(r.tried) && r.tried.length) {
+      msg += '：' + r.tried.slice(0, 3).map(t => t.via + ' ' + t.err).join('，');
+    }
+    toast('获取失败：' + msg);
+  }
   refresh();
 });
 

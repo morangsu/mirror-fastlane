@@ -253,19 +253,22 @@ async function fetchRemoteList() {
   const settings = await getSettings();
   const cfg = settings.remoteList || {};
   if (!cfg.enabled) return { ok: false, reason: 'not-enabled' };
-  if (!cfg.url) return { ok: false, reason: 'no-url' };
+
+  // 地址留空就用默认（仓库里的 mirrors.json），不用手填
+  const rawUrl = String(cfg.url || MFL.DEFAULT_SETTINGS.remoteList.url).trim();
+  if (!rawUrl) return { ok: false, reason: 'no-url' };
 
   const mirrors = await getMirrors();
   const candidates = [];
-  const rawUrl = cfg.url;
   mirrors.filter(m => m.enabled && m.permitted).sort((a, b) => (b.score || 0) - (a.score || 0))
     .forEach(m => candidates.push({ via: m.name, url: String(m.base).replace(/\/+$/, '') + '/' + rawUrl }));
   candidates.push({ via: '直连', url: rawUrl });
 
+  const tried = [];
   for (const c of candidates) {
     try {
       const res = await fetch(c.url, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10000) });
-      if (!res.ok) continue;
+      if (!res.ok) { tried.push({ via: c.via, err: 'HTTP ' + res.status }); continue; }
       const data = await res.json();
       const added = await mergeRemoteList(data);
       await ext.storage.local.set({
@@ -273,10 +276,16 @@ async function fetchRemoteList() {
       });
       await applyRules();
       return { ok: true, via: c.via, added };
-    } catch { /* 换下一个 */ }
+    } catch (e) {
+      // 把每个来源的失败原因带回去，界面才能说清是哪一步挂了
+      const why = (e && e.name === 'TimeoutError') ? '超时'
+        : (e && (e.name === 'SyntaxError' || /JSON/i.test(String(e.message)))) ? '返回的不是 JSON'
+          : '连接失败';
+      tried.push({ via: c.via, err: why });
+    }
   }
-  await ext.storage.local.set({ [K.listFetched]: { at: Date.now(), via: '', added: 0, ok: false } });
-  return { ok: false, reason: 'all-failed' };
+  await ext.storage.local.set({ [K.listFetched]: { at: Date.now(), via: '', added: 0, ok: false, tried } });
+  return { ok: false, reason: 'all-failed', tried };
 }
 
 /** 到期才刷新远程清单：距上次成功获取超过 24h 才真的去拉 */

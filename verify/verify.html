@@ -83,9 +83,10 @@
   <h2>3 · 校验历史（可选）</h2>
   <div class="card">
     <div class="row">
-      <button id="pickDir" class="primary">授权下载文件夹</button>
+      <button id="pickFile" class="primary">打开 outbox.txt</button>
+      <button id="pickDir">授权整个文件夹</button>
       <button id="reloadOutbox">重新读取</button>
-      <button id="forgetDir">忘记文件夹</button>
+      <button id="forgetDir">忘记授权</button>
     </div>
     <div class="kv" id="autoInfo" style="display:grid">
       <div>任务文件</div><div id="autoState">—</div>
@@ -94,7 +95,9 @@
     <div class="hint" id="autoHint">
       自动校验由本机脚本完成，不依赖这里：扩展在下载时写出
       <code>_mfl-tasks\&lt;文件名&gt;.task.json</code>，脚本据此比对并弹系统通知。
-      这一块只用来<b>查看脚本写下的历史记录</b>，需要授权脚本输出所在的下载文件夹。
+      这一块只用来<b>查看脚本写下的历史记录</b>。
+      <br>优先用「打开 outbox.txt」——直接选文件，不会碰浏览器的目录访问限制；
+      若选「授权整个文件夹」时提示<b>「此文件夹包含系统文件」</b>，那是浏览器拦的，改选文件即可。
     </div>
     <div id="resultWrap" style="display:none">
       <table>

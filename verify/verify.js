@@ -7,6 +7,8 @@ const $ = id => document.getElementById(id);
 let expected = '';
 let actual = '';
 let dirHandle = null;
+let fileHandle = null;
+const FILE_KEY = 'outboxFile';
 let lastResults = [];
 let pollTimer = null;
 
@@ -202,6 +204,12 @@ function renderResults(list) {
   lastResults = list;
 }
 
+async function loadOutboxFile(fh) {
+  const f = await fh.getFile();
+  const text = await f.text();
+  renderResults(text ? MFL.mergeOutbox(text.split(/\r?\n/), 200) : []);
+}
+
 async function loadOutbox() {
   if (!dirHandle) return;
 
@@ -234,6 +242,28 @@ function toast(msg) {
   }, 5000);
 }
 
+$('pickFile').addEventListener('click', async () => {
+  if (!window.showOpenFilePicker) {
+    return alert('当前浏览器不支持文件选择器，请用「授权整个文件夹」或换 Chrome / Edge。');
+  }
+  let handles;
+  try {
+    handles = await window.showOpenFilePicker({
+      multiple: false,
+      types: [{ description: 'outbox.txt', accept: { 'text/plain': ['.txt'] } }],
+    });
+  } catch { return; }
+  const fh = handles[0];
+  try { await IDB.put(FILE_KEY, fh); } catch { /* 存不了就只在本次有效 */ }
+  fileHandle = fh;
+  try {
+    await loadOutboxFile(fh);
+    toast('已读取 ' + fh.name);
+  } catch (e) {
+    toast('读取失败：' + (e && e.message ? e.message : e));
+  }
+});
+
 $('pickDir').addEventListener('click', async () => {
   if (!window.showDirectoryPicker) {
     alert('当前浏览器不支持目录授权（Firefox 没有 File System Access API）。\n'
@@ -243,7 +273,13 @@ $('pickDir').addEventListener('click', async () => {
   let handle;
   try {
     handle = await window.showDirectoryPicker({ mode: 'read', id: 'mfl-outbox' });
-  } catch { return; }
+  } catch (e) {
+    // 浏览器会因为「目录含系统文件」直接拦下，这个拦截在浏览器侧，扩展改不了
+    if (e && e.name !== 'AbortError') {
+      toast('浏览器拒绝了这个目录，改用「打开 outbox.txt」');
+    }
+    return;
+  }
 
   // 允许选下载根目录（含 _mfl-tasks 子目录），也允许直接选 _mfl-tasks 本身
   const hasTaskDir = await (async () => {
@@ -266,20 +302,31 @@ $('pickDir').addEventListener('click', async () => {
 });
 
 $('reloadOutbox').addEventListener('click', async () => {
-  if (!dirHandle) {
+  if (!fileHandle && !dirHandle) {
+    try { fileHandle = await IDB.get(FILE_KEY); } catch { /* ignore */ }
     try { dirHandle = await IDB.get(IDB.HANDLE_KEY); } catch { /* ignore */ }
   }
-  if (!dirHandle) return toast('请先授权下载文件夹');
+  if (fileHandle) {
+    try {
+      await loadOutboxFile(fileHandle);
+      return toast('已重新读取');
+    } catch {
+      fileHandle = null;
+    }
+  }
+  if (!dirHandle) return toast('请先「打开 outbox.txt」或授权文件夹');
   await loadOutbox();
   toast('已重新读取');
 });
 
 $('forgetDir').addEventListener('click', async () => {
-  if (!confirm('忘记已授权的文件夹？之后需要重新授权才能查看历史记录。')) return;
+  if (!confirm('忘记已授权的文件/文件夹？之后需要重新选择才能查看历史记录。')) return;
   try { await IDB.del(IDB.HANDLE_KEY); } catch { /* ignore */ }
+  try { await IDB.del(FILE_KEY); } catch { /* ignore */ }
   dirHandle = null;
+  fileHandle = null;
   renderResults([]);
-  toast('已忘记文件夹');
+  toast('已忘记授权');
 });
 
 $('resultBody').addEventListener('click', ev => {
@@ -301,15 +348,25 @@ $('resultBody').addEventListener('click', ev => {
 (async () => {
   await refreshState();
   try {
-    dirHandle = await IDB.get(IDB.HANDLE_KEY);
-    if (dirHandle) {
-      // 浏览器重启后句柄还在，但读权限可能已被收回
+    // 优先恢复 outbox.txt 的文件句柄：它不受「目录含系统文件」的限制
+    fileHandle = await IDB.get(FILE_KEY).catch(() => null);
+    if (fileHandle) {
       let perm = 'granted';
-      if (typeof dirHandle.queryPermission === 'function') {
-        perm = await dirHandle.queryPermission({ mode: 'read' });
+      if (typeof fileHandle.queryPermission === 'function') {
+        perm = await fileHandle.queryPermission({ mode: 'read' });
       }
-      if (perm === 'granted') await loadOutbox();
-      else toast('文件夹读取权限已失效，请重新选择下载根目录');
+      if (perm === 'granted') await loadOutboxFile(fileHandle);
+      else { fileHandle = null; toast('文件权限已失效，请重新选择 outbox.txt'); }
+    } else {
+      dirHandle = await IDB.get(IDB.HANDLE_KEY);
+      if (dirHandle) {
+        let perm = 'granted';
+        if (typeof dirHandle.queryPermission === 'function') {
+          perm = await dirHandle.queryPermission({ mode: 'read' });
+        }
+        if (perm === 'granted') await loadOutbox();
+        else toast('文件夹读取权限已失效，请重新授权或改用「打开 outbox.txt」');
+      }
     }
   } catch { /* ignore */ }
   pollTimer = setInterval(() => {

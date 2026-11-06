@@ -11,18 +11,6 @@
     font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     background: #ffffff; color: #1f2328;
   }
-  @media (prefers-color-scheme: dark) {
-    body { background: #1c2128; color: #e6edf3; }
-    .card { background: #22272e !important; border-color: #30363d !important; }
-    .row + .row { border-color: #30363d !important; }
-    .muted { color: #8b949e !important; }
-    /* 按钮原来只改了 body 的颜色：深色下浅色底 + 浅色字，文字直接看不见 */
-    button { background: #2d333b; border-color: #444c56; color: #e6edf3; }
-    button:hover { background: #373e47; }
-    button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-    button.primary:hover { background: #2d7ff0; }
-    .hint { color: #8b949e; }
-  }
   h1 { font-size: 14px; font-weight: 600; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #8b949e; }
   .dot.on { background: #1a7f37; }
@@ -36,13 +24,27 @@
   .actions { display: flex; gap: 8px; margin-top: 12px; }
   button {
     flex: 1; padding: 7px 10px; font-size: 12.5px; cursor: pointer;
-    border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; color: inherit;
+    border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; color: #1f2328;
   }
   button:hover { background: #eaeef2; }
   button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
   button.primary:hover { background: #1a5fd0; }
   .switch { display: flex; align-items: center; gap: 8px; }
   .hint { margin-top: 10px; font-size: 11.5px; color: #57606a; }
+
+  /* 深色：必须放在最后。放前面会被后面的同名规则按"后来居上"覆盖掉——
+     之前就是这样，按钮还是浅底，配上继承来的浅色文字，等于白底白字。 */
+  @media (prefers-color-scheme: dark) {
+    body { background: #1c2128; color: #e6edf3; }
+    .card { background: #22272e; border-color: #30363d; }
+    .row + .row { border-color: #30363d; }
+    .muted { color: #8b949e; }
+    .hint { color: #8b949e; }
+    button { background: #2d333b; border-color: #444c56; color: #e6edf3; }
+    button:hover { background: #373e47; }
+    button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+    button.primary:hover { background: #2d7ff0; }
+  }
 </style>
 </head>
 <body>
