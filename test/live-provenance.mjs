@@ -45,16 +45,26 @@ function runHook(dir, extra = '') {
   };
 }
 
-/** 先试 fetch；连不上 github.com 时退到 curl（先吃环境代理，再试 Clash 默认端口） */
-async function download(url) {
-  try {
-    const r = await fetch(url, { headers: { 'User-Agent': 'mfl-live-test' } });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return Buffer.from(await r.arrayBuffer());
-  } catch { /* 落到 curl */ }
+/*
+ * 本机到 github.com / api.github.com 经常要过代理，Node 的 fetch 不读 http_proxy，
+ * 所以统一走 curl：先吃环境代理，再显式试 Clash 默认端口。
+ */
+const CURL_PROXIES = [[], ['-x', 'http://127.0.0.1:7897']];
 
-  const attempts = [[], ['-x', 'http://127.0.0.1:7897']];
-  for (const extra of attempts) {
+function curlJson(url) {
+  for (const extra of CURL_PROXIES) {
+    const r = spawnSync('curl', ['-sSL', '--max-time', '40',
+      '-H', 'Accept: application/vnd.github+json', '-H', 'User-Agent: mfl-live-test',
+      ...extra, url], { encoding: 'utf8' });
+    if (r.status === 0 && r.stdout && r.stdout.trim()) {
+      try { return JSON.parse(r.stdout); } catch { /* 继续试下一个代理 */ }
+    }
+  }
+  return null;
+}
+
+function download(url) {
+  for (const extra of CURL_PROXIES) {
     const tmp = join(tmpdir(), 'mfl-live-dl-' + Date.now());
     const r = spawnSync('curl', ['-sSL', '--max-time', '60', '-o', tmp, ...extra, url], { encoding: 'utf8' });
     if (r.status === 0 && existsSync(tmp)) {
@@ -66,7 +76,8 @@ async function download(url) {
   return null;
 }
 
-const dirs = [];function makeCase(tag, name, expected, size, buf, meta) {
+const dirs = [];
+function makeCase(tag, name, expected, size, buf, meta) {
   const d = mkdtempSync(join(tmpdir(), 'mfl-live-' + tag + '-'));
   dirs.push(d);
   mkdirSync(join(d, 'Archives'), { recursive: true });
@@ -82,11 +93,9 @@ const dirs = [];function makeCase(tag, name, expected, size, buf, meta) {
 
 (async () => {
   console.log('仓库: ' + REPO);
-  const rel = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
-    headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'mfl-live-test' },
-  }).then(r => r.json());
+  const rel = curlJson('https://api.github.com/repos/' + REPO + '/releases/latest');
 
-  if (!rel || !rel.assets) { console.error('拿不到 release:', JSON.stringify(rel).slice(0, 200)); process.exit(1); }
+  if (!rel || !rel.assets) { console.error('拿不到 release（网络/代理不通？）'); process.exit(1); }
 
   const asset = (rel.assets || [])
     .filter(a => a.digest && /^sha256:[a-f0-9]{64}$/.test(a.digest) && a.size > 0 && a.size <= MAX_BYTES)
@@ -97,7 +106,7 @@ const dirs = [];function makeCase(tag, name, expected, size, buf, meta) {
   const digest = asset.digest.slice(7);
   console.log(`资产: ${asset.name}  ${(asset.size / 1024).toFixed(1)} KB  digest=${digest.slice(0, 16)}…`);
 
-  const real = await download(asset.browser_download_url);
+  const real = download(asset.browser_download_url);
   // 拿不到真实字节时，用占位内容跑"冲突/降级"两类用例（它们不依赖内容）
   const buf = real || Buffer.from('placeholder content for provenance test');
   if (real) {
@@ -131,12 +140,15 @@ const dirs = [];function makeCase(tag, name, expected, size, buf, meta) {
     const r = runHook(d);
     ok('脚本正常退出', r.status === 0, String(r.status));
     ok('识别为哈希来源冲突', /哈希来源冲突|来源被改动/.test(r.out), r.out.split('\n').slice(-4).join(' | '));
+    ok('按资产 id 精确回源', /按 id 精确查/.test(r.out), r.out.split('\n').slice(-5).join(' | '));
     ok('没有把它当成校验通过', !/校验通过/.test(r.out), r.out.split('\n').slice(-3).join(' | '));
   }
 
   console.log('\n3. 断网模拟：-NoNet 时不联网、且如实降级');
   {
-    const d = makeCase('noNet', asset.name, digest, asset.size, buf, meta);
+    // 期望值取本地内容的哈希，这样无论网络是否可用，结论都应该落在"未复核"而不是"失败"
+    const localDigest = createHash('sha256').update(buf).digest('hex');
+    const d = makeCase('noNet', asset.name, localDigest, asset.size, buf, meta);
     const r = runHook(d, ' -NoNet');
     ok('标注为仅凭任务文件', /仅凭任务文件通过/.test(r.out), r.out.split('\n').slice(-3).join(' | '));
     ok('说明了未复核原因', /NoNet/.test(r.out), r.out.split('\n').slice(-2).join(' | '));

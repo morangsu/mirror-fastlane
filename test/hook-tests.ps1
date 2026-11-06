@@ -84,19 +84,16 @@ function New-File {
 }
 
 function Invoke-Hook {
-    param([string]$Dir, [switch]$NoNet, [switch]$ShowLog)
+    param([string]$Dir, [switch]$NoNet, [switch]$ShowLog, [string]$FilePath = '', [switch]$ScanRecent)
     $out = Join-Path $Dir '_mfl-tasks\outbox.txt'
     if ([System.IO.File]::Exists($out)) { [System.IO.File]::Delete($out) }
     if ($env:MFL_TEST_DEBUG) { Write-Host ("  [dbg] hook = " + $script:hookPath) }
-    # 直接写参数，不用 splatting：5.1 对 switch 参数的数组展开有兼容问题
-    # 写日志走的是 Write-Host，必须用 *>&1 合并所有流才能捕获
-    if ($ShowLog) {
-        if ($NoNet) { $text = & $script:hookPath -DownloadDir $Dir -NoNotify -NoNet *>&1 | Out-String }
-        else { $text = & $script:hookPath -DownloadDir $Dir -NoNotify *>&1 | Out-String }
-    } else {
-        if ($NoNet) { $text = & $script:hookPath -DownloadDir $Dir -NoNotify -Quiet -NoNet *>&1 | Out-String }
-        else { $text = & $script:hookPath -DownloadDir $Dir -NoNotify -Quiet *>&1 | Out-String }
-    }
+
+    # 数组 splatting 不会把字符串当参数名（会被当成位置参数值），
+    # 所以用具名参数 + 显式布尔的形式，一条调用覆盖所有组合。
+    # 写日志走的是 Write-Host，必须用 *>&1 合并所有流才能捕获。
+    $text = & $script:hookPath $FilePath -DownloadDir $Dir -NoNotify `
+        -Quiet:(-not $ShowLog) -NoNet:$NoNet -ScanRecent:$ScanRecent *>&1 | Out-String
     $lines = @()
     if (Test-Path -LiteralPath $out) {
         $lines = @(Get-Content -LiteralPath $out | Where-Object { $_ -match '\|' })
@@ -341,6 +338,24 @@ try {
     & $script:integrityPath -Target $tScript -NoGit -Update *>&1 | Out-Null
     $o3 = & $script:integrityPath -Target $tScript -NoGit *>&1 | Out-String
     Test-Ok '重建基线后恢复通过' ($LASTEXITCODE -eq 0) $o3
+
+    # --------------------------------------------------------------- 19
+    Write-Host "`n19. 非 GitHub 下载（无任务文件）默认不打扰"
+    $d = New-Case 'c19'
+    $p = Join-Path $d 'Archives\from-somewhere-else.zip'
+    New-File $p 'downloaded from a random website' | Out-Null
+
+    $r = Invoke-Hook $d -FilePath $p -ShowLog
+    Test-Eq '显式路径但无任务时零记录' ($r.Lines.Count) 0
+    Test-Ok '日志说明已跳过' ($r.Output -match '没有对应的校验任务') $r.Output
+
+    $r2 = Invoke-Hook $d -FilePath $p -ShowLog -ScanRecent
+    Test-Eq '-ScanRecent 时写一条' ($r2.Lines.Count) 1
+    Test-Ok '只报告本地值（none）' ($r2.Lines[0] -match '\|none$') $r2.Lines[0]
+
+    $r3 = Invoke-Hook $d -ShowLog
+    Test-Eq '无任务 + 无显式路径时也零记录' ($r3.Lines.Count) 0
+    Test-Ok '提示可用 -ScanRecent' ($r3.Output -match 'ScanRecent') $r3.Output
 } finally {
     # 用 .NET API 删自己的临时目录，避免经过 Remove-Item 的删除钩子
     try {

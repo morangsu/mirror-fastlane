@@ -6,7 +6,9 @@
 #      默认还会拿任务里的 repo / tag / assetId 回源 api.github.com 复核这条哈希
 #      （任务文件是磁盘上的普通 JSON，本地进程可改，单靠它不足以取信），
 #      两边不一致就报"哈希来源被改动"，而不是悄悄通过；
-#   2) 没有任务文件时，退化为"找最新的下载文件并计算哈希"，写进 outbox.txt 供扩展展示。
+#   2) 没有任务文件时默认什么都不做——下载器对每次完成都会调用本脚本，
+#      其中大部分是非 GitHub 的下载，不应该弹通知、也不该写记录。
+#      想"只算一下最新下载文件的哈希"时加 -ScanRecent。
 #
 # 下载目录可以自动探测（Chrome / Edge / Brave / Firefox / IDM / 系统下载文件夹），
 # 也可用 -DownloadDir 显式指定；下载文件允许位于下载目录的子文件夹（IDM 分类存放）。
@@ -44,6 +46,7 @@ param(
     [switch]$Quiet,
     [switch]$NoNet,
     [switch]$Lib,
+    [switch]$ScanRecent,
     [int]$NetTimeoutSec = 8,
     [int]$KeepDays = 7,
     [int]$MaxLines = 200
@@ -822,17 +825,29 @@ try {
         $taskFile = ''
         $remote = $null
         $expSize = [long]0
+        $taskHit = $false
         foreach ($t in (Get-TaskFiles -Dirs $dirs)) {
             $j = Read-TaskFile $t.File.FullName
-            if ($j -and $j.name -eq $leaf -and $j.expected) {
-                $expected = [string]$j.expected
-                $source = if ($j.source) { [string]$j.source } else { '公告值' }
+            if ($j -and $j.name -eq $leaf) {
+                # 命中任务就算"这次要管的下载"，即使扩展没取到期望哈希
+                $taskHit = $true
                 $taskFile = $t.File.FullName
-                if ($j.size) { try { $expSize = [long]$j.size } catch { $expSize = 0 } }
-                $remote = Get-RemoteAsset -Repo ([string]$j.repo) -Tag ([string]$j.tag) `
-                    -AssetId ([long]$(if ($j.assetId) { $j.assetId } else { 0 })) -AssetName $leaf
+                if ($j.expected) {
+                    $expected = [string]$j.expected
+                    $source = if ($j.source) { [string]$j.source } else { '公告值' }
+                    if ($j.size) { try { $expSize = [long]$j.size } catch { $expSize = 0 } }
+                    $remote = Get-RemoteAsset -Repo ([string]$j.repo) -Tag ([string]$j.tag) `
+                        -AssetId ([long]$(if ($j.assetId) { $j.assetId } else { 0 })) -AssetName $leaf
+                }
                 break
             }
+        }
+
+        # 没有任务文件 = 不是扩展接管的 GitHub 下载（例如从别的站下同一个名字）。
+        # 默认不处理：不弹通知、不写记录，避免多线程下载器每次完成都打扰。
+        if (-not $taskHit -and -not $ScanRecent) {
+            Write-Log "没有对应的校验任务，跳过: $leaf"
+            exit 0
         }
 
         $r = Invoke-Verify -FilePath $explicit -Expected $expected -ExpectedSource $source `
@@ -905,7 +920,15 @@ try {
     # 有任务在等待落盘时，不要用"最新文件"兜底，否则会误判无关文件
     if ($handled -gt 0 -or $pending -gt 0) { exit 0 }
 
-    # 4) 兜底：没有任务文件时，处理最新的下载文件
+    # 4) 兜底：没有任务文件时，处理最新的下载文件（默认关闭）
+    #
+    # 下载器会对每一次完成都调用本脚本，其中有大量非 GitHub 的下载。
+    # 默认不扫描、不通知、不写记录，避免把无关文件当成待校验对象。
+    if (-not $ScanRecent) {
+        Write-Log '没有校验任务，跳过（需要"算一下最新下载的哈希"请加 -ScanRecent）'
+        exit 0
+    }
+
     $after = (Get-Date).AddMinutes(-$RecentMinutes)
     $newest = Find-NewestFile -Dirs $dirs -After $after
     if (-not $newest) {
