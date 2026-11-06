@@ -273,13 +273,23 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 **这个脚本不在扩展包内，需要你自己下载。** 使用前请阅读源码并自行审查其安全性与可靠性；作者仅保证它在开发者本人的设备上可用，不对其他环境作任何承诺。
 
 - aria2 / Motrix / Gopeed：把脚本挂到「下载完成」与「下载失败」回调
-- IDM：选项 → 下载完成后运行程序，填
 
-  ```powershell
-  pwsh -NoProfile -ExecutionPolicy Bypass -File "…\hash-hook.ps1"
-  ```
+**IDM**：IDM 没有通用的「下载完成后运行程序」选项，唯一可用的钩子是「病毒检查」那一栏（官方文档明确：
+下载完成时用 `[File]` 替换成文件路径去 CreateProcess）。设置路径：
 
-  （没装 PowerShell 7 的话，把 `pwsh` 换成 `powershell` 也能跑，脚本向下兼容 5.1）
+1. 选项 → 「下载」标签页 → 「病毒检查设置」→ 编辑
+2. 程序填 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+3. 参数填（路径换成你自己的，`[File]` 原样保留）：
+
+   ```
+   -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%LOCALAPPDATA%\MirrorFastlane\hash-hook.ps1" "[File]"
+   ```
+
+4. 确定保存
+
+IDM 会对**每一次**下载完成都调用它，脚本靠任务文件区分：没有对应任务的（非 GitHub 下载）静默退出，不弹通知、不写记录。
+建议把脚本放在 `%LOCALAPPDATA%\MirrorFastlane\` 而不是仓库目录——仓库移动或重新 clone 不影响挂载；
+更新脚本时覆盖过去，再跑一次 `check-integrity.ps1` 确认基线一致。
 
 失败回调再加 `-Status fail`。脚本只做三件事：读本地文件、算 SHA-256、写一行文本 / 弹一条通知。
 不联网、不上传、不执行下载内容。
@@ -290,7 +300,7 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 ## 测试
 
 ```bash
-node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描（118 项）
+node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描（156 项）
 node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（23 项）
 node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（8 项）
 node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（18 项）
@@ -298,7 +308,7 @@ node test/run-ps-tests.mjs     # 脚本逻辑：19 组用例、57 项断言（�
 npx web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 ```
 
-单元测试 148 项、脚本测试 57 项，合计 **254 项**。
+单元测试 156 项、脚本测试 57 项，其余 49 项（冒烟 23 + 改写 8 + 任务文件 18），合计 **262 项**。
 
 `test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完 19 组用例：
 
