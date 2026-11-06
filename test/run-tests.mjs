@@ -94,12 +94,9 @@ const mirrors = [
   { id: 'd', name: 'D', base: 'https://d.example.com', enabled: true, healthy: false, permitted: true, score: 1 },
   { id: 'e', name: 'E', base: 'https://e.example.com', enabled: true, healthy: true, permitted: false, score: 0.1 },
 ];
-const rules = MFL.buildRules(mirrors, { codeload: { enabled: false } });
-eq('只对启用+健康的镜像建规则（授权与跳转无关）', rules.length, 3);
-ok('未授权但健康的镜像仍会生成规则', rules.some(r => r.action.redirect.regexSubstitution.includes('e.example.com')));
-eq('最高分排第一', MFL.hostOf(rules[0].action.redirect.regexSubstitution), 'b.example.com');
-ok('优先级递减', rules[0].priority > rules[1].priority);
-eq('规则 id 唯一', new Set(rules.map(r => r.id)).size, rules.length);
+const rules = MFL.buildRules(mirrors, { codeload: { enabled: false }, split: { enabled: true } });
+eq('只建一条直链规则（DNR 没有链式回退，多建的规则永远轮不到）', rules.length, 1);
+eq('最高分镜像胜出', MFL.hostOf(rules[0].action.redirect.regexSubstitution), 'b.example.com');
 
 const sample = 'https://github.com/obsproject/obs-studio/releases/download/33.0.1/OBS-Studio-33.0.1-macOS-Apple.dmg';
 const r0 = rules[0];
@@ -113,14 +110,36 @@ ok('已是镜像的链接不匹配',
   MFL.applyRegexSubstitution(r0.condition.regexFilter, r0.action.redirect.regexSubstitution,
     'https://b.example.com/' + sample) === null);
 
-const withCodeload = MFL.buildRules(mirrors, { codeload: { enabled: true } });
-eq('开启源码包后规则翻倍', withCodeload.length, 6);
+const pick = MFL.chooseMirrors(mirrors, { split: { enabled: true } });
+eq('首选是得分最高的健康镜像', pick.primary.id, 'b');
+eq('分流时源码包换另一个镜像', pick.archive.id, 'a');
+ok('停用与不健康的镜像不参与',
+  pick.ranked.every(m => m.id !== 'c' && m.id !== 'd'), pick.ranked.map(m => m.id).join(','));
+ok('未授权但健康的镜像仍可作为改写目标',
+  pick.ranked.some(m => m.id === 'e'), pick.ranked.map(m => m.id).join(','));
+
+const single = MFL.chooseMirrors(
+  [{ id: 'x', base: 'https://x.example.com', enabled: true, healthy: true, score: 1 }],
+  { split: { enabled: true } });
+eq('只有一个镜像时分流退化为同一个', single.archive.id, 'x');
+
+const withCodeload = MFL.buildRules(mirrors, { codeload: { enabled: true }, split: { enabled: true } });
+eq('开启源码包后两条规则', withCodeload.length, 2);
 const codeloadRule = withCodeload.find(r => r.condition.regexFilter.includes('codeload'));
+eq('源码包走第二个镜像', MFL.hostOf(codeloadRule.action.redirect.regexSubstitution), 'a.example.com');
+ok('直链优先级高于源码包', withCodeload[0].priority > codeloadRule.priority);
+eq('规则 id 唯一', new Set(withCodeload.map(r => r.id)).size, 2);
 const archiveUrl = 'https://codeload.github.com/owner/repo/tar.gz/refs/tags/v1.0.0';
 eq('源码包替换结果',
   MFL.applyRegexSubstitution(codeloadRule.condition.regexFilter, codeloadRule.action.redirect.regexSubstitution, archiveUrl),
-  'https://b.example.com/' + archiveUrl);
+  'https://a.example.com/' + archiveUrl);
+
+const noSplit = MFL.buildRules(mirrors, { codeload: { enabled: true }, split: { enabled: false } });
+eq('关闭分流时源码包也走主镜像',
+  MFL.hostOf(noSplit.find(r => r.condition.regexFilter.includes('codeload')).action.redirect.regexSubstitution),
+  'b.example.com');
 eq('无可用镜像时返回空规则', MFL.buildRules([], {}).length, 0);
+eq('没有可用镜像时不选任何目标', MFL.chooseMirrors([], {}).primary, null);
 
 /* ------------------------------ 5. 打分 ------------------------------ */
 

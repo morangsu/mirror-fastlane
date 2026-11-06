@@ -1,6 +1,6 @@
 {
   "name": "mirror-fastlane",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "private": true,
   "description": "为 GitHub 下载链接自动选择可用镜像的浏览器扩展（Edge / Chrome / Firefox）",
   "scripts": {

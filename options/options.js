@@ -146,6 +146,7 @@ function render() {
   $('clickToast').checked = !!s.clickToast;
   $('codeload').checked = !!(s.codeload && s.codeload.enabled);
   $('codeloadProbe').checked = !!(s.codeload && s.codeload.probeOn);
+  $('splitMirrors').checked = !!(s.split && s.split.enabled);
   $('probeMode').value = s.probeMode || 'ondemand';
   $('probeInterval').value = s.probeIntervalMin || 60;
   $('winEnabled').checked = !!(s.activeWindow && s.activeWindow.enabled);
@@ -160,8 +161,15 @@ function render() {
   const ri = state.ruleInfo || {};
   $('ruleTag').textContent = !state.inWindow ? '时段外' : (ri.count ? '生效中' : '无可用');
   $('ruleTag').className = 'tag ' + (!state.inWindow ? 'warn' : ri.count ? 'ok' : 'err');
-  $('ruleInfo').textContent = '规则 ' + (ri.count || 0) + ' 条；' +
-    (ri.best ? '当前镜像 ' + ri.best.name : '当前无镜像，下载走主站');
+
+  let routeText = '';
+  if (ri.best) {
+    routeText = '直链走 ' + ri.best.name;
+    if (ri.archive && ri.archive.host !== ri.best.host) routeText += '，源码包走 ' + ri.archive.name;
+  } else {
+    routeText = '当前无镜像，下载走主站';
+  }
+  $('ruleInfo').textContent = '规则 ' + (ri.count || 0) + ' 条；' + routeText;
 
   const lf = state.listFetched;
   $('remoteInfo').textContent = lf
@@ -282,6 +290,7 @@ bindToggle('markLinks', el => ({ markLinks: el.checked }));
 bindToggle('clickToast', el => ({ clickToast: el.checked }));
 bindToggle('codeload', el => ({ codeload: Object.assign({}, state.settings.codeload, { enabled: el.checked }) }));
 bindToggle('codeloadProbe', el => ({ codeload: Object.assign({}, state.settings.codeload, { probeOn: el.checked }) }));
+bindToggle('splitMirrors', el => ({ split: Object.assign({}, state.settings.split, { enabled: el.checked }) }));
 // 哈希两个开关在 toggleHashFlag 里单独处理：要先拿到 api.github.com 的权限
 
 $('probeMode').addEventListener('change', async e => {

@@ -137,6 +137,10 @@
       <div class="k"><b>源码包参与测速</b><small>默认关闭，避免额外消耗镜像流量</small></div>
       <input type="checkbox" id="codeloadProbe">
     </div>
+    <div class="row">
+      <div class="k"><b>直链与源码包分走不同镜像</b><small>直链用最快的镜像，源码包换第二个健康镜像，避免两类流量挤在同一条链路上；只有一个可用镜像时自动退化为同一个</small></div>
+      <input type="checkbox" id="splitMirrors">
+    </div>
   </div>
 
   <h2>探测策略</h2>

@@ -110,19 +110,24 @@ async function doApplyRules() {
   const removeRuleIds = existing.map(r => r.id);
   await ext.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules: want });
 
-  const best = want.length ? mirrors.filter(m => m.enabled && m.healthy)
-    .sort((a, b) => (b.score || 0) - (a.score || 0))[0] : null;
+  const best = MFL.chooseMirrors(mirrors, settings);
+  const brief = m => (m ? { name: m.name, base: m.base, score: m.score, host: MFL.hostOf(m.base) } : null);
+  const useArchive = !!(settings.codeload && settings.codeload.enabled);
+  const primary = active ? brief(best.primary) : null;
+  const archive = active && useArchive ? brief(best.archive) : null;
 
   setBadge(active ? (want.length ? 'ON' : '!') : '', active ? (want.length ? '#1a7f37' : '#b54708') : '#6b7280');
   await ext.storage.local.set({
     ruleInfo: {
       count: want.length,
       active,
-      best: best ? { name: best.name, base: best.base, score: best.score } : null,
+      best: want.length ? primary : null,
+      archive: want.length ? archive : null,
+      split: !!best.split,
       updatedAt: Date.now(),
     },
   });
-  return { count: want.length, active, best };
+  return { count: want.length, active, best: primary, archive };
 }
 
 function setBadge(text, color) {
