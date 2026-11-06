@@ -294,6 +294,10 @@ ok('Firefox 必填 data_collection_permissions',
   mf.browser_specific_settings && mf.browser_specific_settings.gecko &&
   mf.browser_specific_settings.gecko.data_collection_permissions.required[0] === 'none');
 ok('有 gecko.id', !!(mf.browser_specific_settings && mf.browser_specific_settings.gecko.id));
+ok('gecko.id 是正式 id（不是 example.com 占位）',
+  /^[a-z0-9-]+@morangsu\.github\.io$/.test(
+    (mf.browser_specific_settings.gecko.id || '')),
+  mf.browser_specific_settings.gecko.id);
 ok('声明 DNR 权限', mf.permissions.includes('declarativeNetRequest'));
 ok('镜像域名走 optional', Array.isArray(mf.optional_host_permissions) && mf.optional_host_permissions.length > 0);
 ok('未申请 tabs/webRequest 等敏感权限',

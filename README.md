@@ -325,15 +325,15 @@ npx web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 
 ```powershell
 npm run build
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.0.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.0.zip -Force
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.1.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.1.zip -Force
 ```
 
 `hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，
 设置页里链接到 release 页，用户自己下载并审查。
 
-**上架前请自查**：`manifest.json` 的 `gecko.id` 目前是占位值 `mirror-fastlane@example.com`，
-AMO 首次提交后不可更改，建议换成自己域名下的 id。
+**扩展 ID 已定稿**：`mirror-fastlane@morangsu.github.io`（与 `zenith-newtab@morangsu.github.io` 同一命名约定，
+即 `<仓库名>@morangsu.github.io`）。AMO 首次提交后 id 不可更改，提交前请不要再动它。
 
 ## 隐私
 
