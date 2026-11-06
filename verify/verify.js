@@ -302,7 +302,15 @@ $('resultBody').addEventListener('click', ev => {
   await refreshState();
   try {
     dirHandle = await IDB.get(IDB.HANDLE_KEY);
-    if (dirHandle) await loadOutbox();
+    if (dirHandle) {
+      // 浏览器重启后句柄还在，但读权限可能已被收回
+      let perm = 'granted';
+      if (typeof dirHandle.queryPermission === 'function') {
+        perm = await dirHandle.queryPermission({ mode: 'read' });
+      }
+      if (perm === 'granted') await loadOutbox();
+      else toast('文件夹读取权限已失效，请重新选择下载根目录');
+    }
   } catch { /* ignore */ }
   pollTimer = setInterval(() => {
     if (document.visibilityState === 'visible') refreshState().catch(() => {});

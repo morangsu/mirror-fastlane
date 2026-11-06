@@ -33,8 +33,9 @@ function render(s) {
 }
 
 function bestKbps(s) {
-  const name = s.ruleInfo && s.ruleInfo.best && s.ruleInfo.best.name;
-  const m = s.mirrors.find(x => x.name === name);
+  const base = s.ruleInfo && s.ruleInfo.best && s.ruleInfo.best.base;
+  // 按 host 找，不用名字：用户可能给镜像改了名，也可能两个镜像同名
+  const m = base ? s.mirrors.find(x => MFL.hostOf(x.base) === MFL.hostOf(base)) : null;
   return m && m.stats ? m.stats.kbps : 0;
 }
 

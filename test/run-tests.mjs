@@ -319,6 +319,14 @@ for (const f of files) {
 }
 ok('无远程代码 / eval / 硬编码 Token', bad.length === 0, JSON.stringify(bad));
 
+// 哈希功能依赖 api.github.com 的权限；设置页必须自己申请，否则任务文件里永远没有 expected
+const optJs = readFileSync(join(ROOT, 'options', 'options.js'), 'utf8');
+ok('设置页会为哈希功能申请 api.github.com 权限',
+  /api\.github\.com\/\*/.test(optJs) && /permissions\.request/.test(optJs));
+ok('manifest 未申请 tabs / webRequest 等宽权限',
+  !JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8')).permissions
+    .some(p => ['tabs', 'webRequest', 'history', 'cookies'].includes(p)));
+
 /* ------------------------------ 11. 打包产物 ------------------------------ */
 
 group('11. 自动校验逻辑');

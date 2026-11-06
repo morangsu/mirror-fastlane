@@ -175,10 +175,6 @@ function render() {
   $('probeInterval').disabled = s.probeMode !== 'interval';
 }
 
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
 /* --------------------------------- 事件 ---------------------------------- */
 
 async function refresh() {
@@ -237,6 +233,31 @@ async function requestOrigin(base) {
   }
 }
 
+/** 哈希功能要用 api.github.com；没这一步权限，任务文件里的 expected 永远是 null */
+async function ensureApiPermission() {
+  const origins = ['https://api.github.com/*'];
+  try {
+    if (await ext.permissions.contains({ origins })) return true;
+    return await ext.permissions.request({ origins });
+  } catch {
+    return false;
+  }
+}
+
+async function toggleHashFlag(flag, el) {
+  if (el.checked && !(await ensureApiPermission())) {
+    el.checked = false;
+    return toast('未获得 api.github.com 授权，取不到期望哈希');
+  }
+  await send('save-settings', { patch: { hash: Object.assign({}, state.settings.hash, { [flag]: el.checked }) } });
+  if (flag === 'auto' && el.checked && !(state.settings.hash && state.settings.hash.enabled)) {
+    toast('还要打开上面的「启用哈希校验」');
+  }
+}
+
+$('hashEnabled').addEventListener('change', e => toggleHashFlag('enabled', e.target));
+$('hashAuto').addEventListener('change', e => toggleHashFlag('auto', e.target));
+
 $('addBtn').addEventListener('click', async () => {
   const base = MFL.normalizeBase($('newBase').value);
   if (!base) return toast('地址无效，需要是 https:// 开头的域名');
@@ -261,8 +282,7 @@ bindToggle('markLinks', el => ({ markLinks: el.checked }));
 bindToggle('clickToast', el => ({ clickToast: el.checked }));
 bindToggle('codeload', el => ({ codeload: Object.assign({}, state.settings.codeload, { enabled: el.checked }) }));
 bindToggle('codeloadProbe', el => ({ codeload: Object.assign({}, state.settings.codeload, { probeOn: el.checked }) }));
-bindToggle('hashEnabled', el => ({ hash: Object.assign({}, state.settings.hash, { enabled: el.checked }) }));
-bindToggle('hashAuto', el => ({ hash: Object.assign({}, state.settings.hash, { auto: el.checked }) }));
+// 哈希两个开关在 toggleHashFlag 里单独处理：要先拿到 api.github.com 的权限
 
 $('probeMode').addEventListener('change', async e => {
   await send('save-settings', { patch: { probeMode: e.target.value } });

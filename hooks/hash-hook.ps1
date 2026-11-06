@@ -802,9 +802,29 @@ try {
     Clear-StaleTasks -Dirs $dirs
 
     # 1) 失败回报：不算哈希
+    #
+    # 下载器失败回调同样会对"任意来源"的下载触发，所以默认只回报扩展接管过的那次，
+    # 否则下一个普通文件失败也会弹通知、写记录。
     if ($Status -eq 'fail') {
         $target = $Arg2
         if (-not $target -and $Arg0 -and (Test-Path -LiteralPath $Arg0)) { $target = $Arg0 }
+
+        $leaf = ''
+        if ($target -and $target -ne '<下载失败>') { $leaf = Split-Path -Leaf $target }
+
+        $hasTask = $false
+        if ($leaf) {
+            foreach ($t in (Get-TaskFiles -Dirs $dirs)) {
+                $j = Read-TaskFile $t.File.FullName
+                if ($j -and $j.name -eq $leaf) { $hasTask = $true; break }
+            }
+        }
+
+        if (-not $hasTask -and -not $ScanRecent) {
+            Write-Log '失败回报没有对应的校验任务，跳过'
+            exit 0
+        }
+
         if (-not $target) { $target = '<下载失败>' }
         Write-OutboxLine -OutboxPath $outboxPath -FilePath $target -Hash '' -State 'fail'
         Show-ResultNotify -Title '下载失败' -Body '本次下载未完成，未做哈希校验' -Level Error | Out-Null

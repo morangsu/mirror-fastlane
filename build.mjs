@@ -145,9 +145,6 @@ const edge = buildTarget('edge', mf => {
   delete mf.browser_specific_settings;
   // Chrome 在 MV3 下不接受 background.scripts，必须只留 service_worker
   mf.background = { service_worker: mf.background.service_worker };
-  if (mf.optional_host_permissions) {
-    // Edge/Chrome 走 declarativeNetRequest，无需额外键
-  }
 });
 
 const firefox = buildTarget('firefox', mf => {

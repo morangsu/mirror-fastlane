@@ -97,11 +97,14 @@
       if (r && typeof r === 'object') info = Object.assign(info, r);
     } catch { /* 后台未就绪 */ }
     started = true;
-    if (!info.active) {
+
+    // 停用或关掉"标记链接"时，把之前插的徽章收回去
+    if (!info.active || !info.markLinks) {
       document.querySelectorAll('.mfl-badge').forEach(el => el.remove());
       document.querySelectorAll('[' + MARK_ATTR + ']').forEach(el => el.removeAttribute(MARK_ATTR));
-      return;
+      if (!info.active) return;
     }
+
     scan();
     if (hasDownloads()) {
       try { ext.runtime.sendMessage({ type: 'maybe-probe' }); } catch {}

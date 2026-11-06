@@ -91,7 +91,16 @@ async function isActiveNow(settings) {
 
 /* --------------------------------- 规则 ---------------------------------- */
 
-async function applyRules() {
+// DNR 的更新是"先全删再全加"，两个调用交错会让规则短暂丢失或 id 冲突，
+// 所以所有重建排队执行。
+let applyChain = Promise.resolve();
+
+function applyRules() {
+  applyChain = applyChain.then(doApplyRules, doApplyRules);
+  return applyChain;
+}
+
+async function doApplyRules() {
   const settings = await getSettings();
   const active = await isActiveNow(settings);
   const mirrors = await getMirrors();
@@ -195,9 +204,8 @@ async function runProbe(list, concurrency) {
 }
 
 async function probeAll(reason) {
-  const settings = await getSettings();
   const mirrors = await getMirrors();
-  const targets = mirrors.filter(m => m.enabled && (reason !== 'codeload' ? true : true));
+  const targets = mirrors.filter(m => m.enabled);
   if (!targets.length) return { probed: 0 };
 
   const results = await runProbe(targets, 3);
@@ -432,13 +440,21 @@ async function createVerifyTask(url, name) {
 
 async function syncAlarms() {
   const settings = await getSettings();
-  await ext.alarms.clear(ALARM_PROBE);
-  if (settings.probeMode === 'interval' && settings.enabled) {
-    const min = Math.max(15, Math.min(1440, settings.probeIntervalMin || 60));
-    await ext.alarms.create(ALARM_PROBE, { periodInMinutes: min });
+  const wantProbe = (settings.probeMode === 'interval' && settings.enabled)
+    ? Math.max(15, Math.min(1440, settings.probeIntervalMin || 60))
+    : 0;
+
+  // 只在"缺失或周期变了"时重建：Service Worker 每次唤醒都会走一遍 bootstrap，
+  // 无条件 create 会把定时器一直往后推，间隔探测可能永远等不到。
+  const cur = await ext.alarms.get(ALARM_PROBE);
+  if (!wantProbe) {
+    if (cur) await ext.alarms.clear(ALARM_PROBE);
+  } else if (!cur || cur.periodInMinutes !== wantProbe) {
+    await ext.alarms.create(ALARM_PROBE, { periodInMinutes: wantProbe });
   }
-  await ext.alarms.clear(ALARM_TICK);
-  await ext.alarms.create(ALARM_TICK, { periodInMinutes: 5 });
+
+  const tick = await ext.alarms.get(ALARM_TICK);
+  if (!tick) await ext.alarms.create(ALARM_TICK, { periodInMinutes: 5 });
 }
 
 ext.alarms.onAlarm.addListener(async alarm => {

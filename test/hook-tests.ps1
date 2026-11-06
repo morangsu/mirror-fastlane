@@ -216,8 +216,18 @@ try {
     $out = Join-Path $d '_mfl-tasks\outbox.txt'
     & $script:hookPath -Status fail -DownloadDir $d -NoNotify -Quiet 2>&1 | Out-Null
     $lines = @(Get-Content -LiteralPath $out -ErrorAction SilentlyContinue | Where-Object { $_ -match '\|' })
-    Test-Eq '写一条记录' ($lines.Count) 1
-    Test-Ok '状态为 fail' ($lines[0] -match '\|fail\|') $lines[0]
+    Test-Eq '没有对应任务时不记录（非 GitHub 下载失败）' ($lines.Count) 0
+
+    # 有任务文件时照常回报失败
+    $d2 = New-Case 'c10b'
+    $out2 = Join-Path $d2 '_mfl-tasks\outbox.txt'
+    New-TaskFile $d2 'failed.zip' ('a' * 64) | Out-Null
+    $fc = Join-Path $d2 'Archives\failed.zip'
+    Set-Content -LiteralPath $fc -Value 'partial' -NoNewline
+    & $script:hookPath $fc -Status fail -DownloadDir $d2 -NoNotify -Quiet 2>&1 | Out-Null
+    $l2 = @(Get-Content -LiteralPath $out2 -ErrorAction SilentlyContinue | Where-Object { $_ -match '\|' })
+    Test-Eq '有任务时写一条记录' ($l2.Count) 1
+    Test-Ok '状态为 fail' ($l2[0] -match '\|fail\|') $l2[0]
 
     # --------------------------------------------------------------- 11
     Write-Host "`n11. 任务在 A 目录、文件在 B 目录"
