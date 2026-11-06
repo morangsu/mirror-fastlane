@@ -12,7 +12,10 @@
     "lint:firefox": "web-ext lint --source-dir dist/firefox",
     "test:taskfile": "node test/taskfile-e2e.mjs",
     "test:hook": "node test/run-ps-tests.mjs",
-    "check:hook": "pwsh -NoProfile -ExecutionPolicy Bypass -File hooks/check-integrity.ps1"
+    "check:hook": "pwsh -NoProfile -ExecutionPolicy Bypass -File hooks/check-integrity.ps1",
+    "store:assets": "node tools/store-assets.mjs",
+    "store:shots": "node tools/store-shots.mjs",
+    "store": "node build.mjs && node tools/store-assets.mjs && node tools/store-shots.mjs"
   },
   "license": "MIT"
 }

@@ -1,11 +1,14 @@
-/* 构建：生成 dist/edge 与 dist/firefox，并按目标裁剪 manifest 差异键 */
+/* 构建：生成 dist/edge 与 dist/firefox，并按目标裁剪 manifest 差异键
+ * 也可被 tools/ 下的脚本 import，复用图标绘制（此时不执行构建）
+ */
 import { readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const DIST = join(ROOT, 'dist');
+const IS_MAIN = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 
 const COPY_DIRS = ['lib', 'content', 'options', 'popup', 'verify', 'data', 'icons'];
 const COPY_FILES = ['background.js'];
@@ -137,21 +140,31 @@ function buildTarget(name, transformManifest) {
 }
 
 // 源码目录也放一份图标，便于「加载已解压的扩展」直接指向仓库根目录
-const rootIcons = join(ROOT, 'icons');
-mkdirSync(rootIcons, { recursive: true });
-for (const s of [16, 32, 48, 128]) writeFileSync(join(rootIcons, `icon${s}.png`), makeIcon(s));
+function writeRootIcons() {
+  const rootIcons = join(ROOT, 'icons');
+  mkdirSync(rootIcons, { recursive: true });
+  for (const s of [16, 32, 48, 128]) writeFileSync(join(rootIcons, `icon${s}.png`), makeIcon(s));
+}
 
-const edge = buildTarget('edge', mf => {
-  delete mf.browser_specific_settings;
-  // Chrome 在 MV3 下不接受 background.scripts，必须只留 service_worker
-  mf.background = { service_worker: mf.background.service_worker };
-});
+function buildAll() {
+  writeRootIcons();
 
-const firefox = buildTarget('firefox', mf => {
-  delete mf.minimum_chrome_version;
-  // Firefox 不支持 background.service_worker
-  mf.background = { scripts: mf.background.scripts };
-});
+  const edge = buildTarget('edge', mf => {
+    delete mf.browser_specific_settings;
+    // Chrome 在 MV3 下不接受 background.scripts，必须只留 service_worker
+    mf.background = { service_worker: mf.background.service_worker };
+  });
 
-console.log(`[edge]    ${edge.out}  ${edge.count} 个文件`);
-console.log(`[firefox] ${firefox.out}  ${firefox.count} 个文件`);
+  const firefox = buildTarget('firefox', mf => {
+    delete mf.minimum_chrome_version;
+    // Firefox 不支持 background.service_worker
+    mf.background = { scripts: mf.background.scripts };
+  });
+
+  console.log(`[edge]    ${edge.out}  ${edge.count} 个文件`);
+  console.log(`[firefox] ${firefox.out}  ${firefox.count} 个文件`);
+}
+
+export { makeIcon, encodePNG };
+
+if (IS_MAIN) buildAll();
