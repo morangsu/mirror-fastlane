@@ -1,0 +1,50 @@
+/* 镜像快车道 - 页面标记样式（尽量不干扰 GitHub 原有布局） */
+
+.mfl-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #0b5cad;
+  background: #dbeafe;
+  border: 1px solid #a8cdf5;
+  border-radius: 9px;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mfl-badge {
+    color: #9ecbff;
+    background: #14304d;
+    border-color: #24527d;
+  }
+}
+
+#mfl-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483000;
+  max-width: 320px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #fff;
+  background: #1f2937;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .25);
+  opacity: 0;
+  transition: opacity .2s ease;
+  pointer-events: none;
+}
+
+#mfl-toast.ok { background: #14532d; }
+#mfl-toast.warn { background: #7c2d12; }

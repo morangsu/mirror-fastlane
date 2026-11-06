@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>镜像快车道 · 设置</title>
+<style>
+  :root { color-scheme: light dark; --bd: #d0d7de; --bg2: #f6f8fa; --muted: #57606a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bd: #30363d; --bg2: #22272e; --muted: #8b949e; }
+    body { background: #1c2128 !important; color: #e6edf3 !important; }
+    input, select, button { background: #22272e !important; color: #e6edf3 !important; }
+    .card { background: #22272e !important; }
+    th { background: #22272e !important; }
+    tr:hover td { background: #262c34 !important; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 20px 60px;
+    font: 13.5px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #1f2328; background: #fff;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+  h1 { font-size: 19px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 22px; }
+  h2 { font-size: 14px; margin: 26px 0 10px; font-weight: 600; }
+  .card { border: 1px solid var(--bd); border-radius: 10px; padding: 14px 16px; background: var(--bg2); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 0; }
+  .row + .row { border-top: 1px solid var(--bd); }
+  .row .k { flex: 1; }
+  .row .k b { font-weight: 500; }
+  .row .k small { display: block; color: var(--muted); font-size: 12px; }
+  input[type=text], input[type=url], input[type=password], input[type=number], input[type=time], select {
+    padding: 5px 8px; border: 1px solid var(--bd); border-radius: 6px; font-size: 13px;
+    background: #fff; color: inherit; min-width: 0;
+  }
+  input[type=text], input[type=url], input[type=password] { width: 100%; }
+  select { min-width: 96px; }
+  button {
+    padding: 6px 12px; font-size: 12.5px; border: 1px solid var(--bd); border-radius: 6px;
+    background: #f6f8fa; color: inherit; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { background: #eaeef2; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.danger { color: #cf222e; }
+  button:disabled { opacity: .55; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--bd); vertical-align: middle; }
+  th { font-weight: 500; color: var(--muted); font-size: 12px; background: var(--bg2); }
+  tr:hover td { background: #fafbfc; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 17px; border: 1px solid var(--bd); color: var(--muted); }
+  .tag.ok { color: #1a7f37; border-color: #a7d6b3; background: #eafaea; }
+  .tag.warn { color: #9a6700; border-color: #eac54f; background: #fdf6dd; }
+  .tag.err { color: #cf222e; border-color: #f3b3b8; background: #fdecee; }
+  @media (prefers-color-scheme: dark) {
+    .tag.ok { background: #13341c; border-color: #2a5a37; }
+    .tag.warn { background: #33280a; border-color: #6b5312; }
+    .tag.err { background: #3a1418; border-color: #6e2730; }
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .warnbox { border: 1px solid #eac54f; background: #fdf6dd; color: #6b4e00; border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
+  @media (prefers-color-scheme: dark) { .warnbox { background: #33280a; color: #f0d68a; border-color: #6b5312; } }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
+  .toast { position: fixed; right: 20px; bottom: 20px; background: #1f2937; color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>镜像快车道</h1>
+  <div class="sub">把开源项目的下载链接切换到可用镜像。所有配置只保存在本机浏览器。</div>
+
+  <div class="card" id="statusCard">
+    <div class="row">
+      <div class="k"><b>总开关</b><small>关闭后不再改写任何链接，页面标记也会一并移除</small></div>
+      <input type="checkbox" id="enabled">
+    </div>
+    <div class="row">
+      <div class="k"><b>规则状态</b><small id="ruleInfo">—</small></div>
+      <span class="tag" id="ruleTag">—</span>
+    </div>
+  </div>
+
+  <h2>镜像列表</h2>
+  <div class="card" style="padding:11px 16px;margin-bottom:10px">
+    <div class="row" style="border:0;padding:0">
+      <div class="k"><b>批量授权</b><small>测速需要「访问镜像域名」的权限；跳转本身不需要授权，所以不授权也能用，只是无法自动排序</small></div>
+      <button id="grantAll" class="primary">一键授权内置镜像</button>
+    </div>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:42px">启用</th>
+          <th>名称 / 地址</th>
+          <th style="width:70px">来源</th>
+          <th style="width:96px">状态</th>
+          <th style="width:96px">速度</th>
+          <th style="width:80px">延迟</th>
+          <th style="width:150px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="mirrorBody"></tbody>
+    </table>
+  </div>
+  <div class="hint">状态为「需授权」时，点「授权」后浏览器会弹一次确认——这是浏览器要求的最小权限授予，只针对该镜像域名。</div>
+
+  <h2>添加镜像</h2>
+  <div class="card">
+    <div class="grid2">
+      <input type="text" id="newName" placeholder="名称（可留空，默认用域名）">
+      <input type="text" id="newBase" placeholder="地址，例如 https://ghfast.top">
+    </div>
+    <div class="row" style="border:0;padding-top:10px">
+      <div class="k"></div>
+      <button class="primary" id="addBtn">添加并授权</button>
+    </div>
+  </div>
+
+  <h2>改写行为</h2>
+  <div class="card">
+    <div class="row">
+      <div class="k"><b>页面标记</b><small>在下载链接旁显示「镜像」角标</small></div>
+      <input type="checkbox" id="markLinks">
+    </div>
+    <div class="row">
+      <div class="k"><b>点击提示</b><small>点击下载后右下角提示走了哪个镜像</small></div>
+      <input type="checkbox" id="clickToast">
+    </div>
+    <div class="row">
+      <div class="k"><b>源码包（codeload）</b><small>开启后 <code>/archive/</code> 链接也会改写；很多镜像不支持这个路径</small></div>
+      <input type="checkbox" id="codeload">
+    </div>
+    <div class="row">
+      <div class="k"><b>源码包参与测速</b><small>默认关闭，避免额外消耗镜像流量</small></div>
+      <input type="checkbox" id="codeloadProbe">
+    </div>
+  </div>
+
+  <h2>探测策略</h2>
+  <div class="card">
+    <div class="row">
+      <div class="k"><b>探测模式</b><small>「仅按需」只在你打开 GitHub 页面时才测速，最省流量</small></div>
+      <select id="probeMode">
+        <option value="ondemand">仅按需</option>
+        <option value="interval">定时</option>
+      </select>
+    </div>
+    <div class="row">
+      <div class="k"><b>定时间隔</b><small>仅在「定时」模式下生效，最小 15 分钟</small></div>
+      <input type="number" id="probeInterval" min="15" max="1440" step="15" style="width:110px">
+    </div>
+    <div class="row">
+      <div class="k"><b>生效时段</b><small>时段外不探测、不改写，全部走主站；支持跨天，如 20:00–02:00</small></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="winEnabled">
+        <input type="time" id="winStart">
+        <span>—</span>
+        <input type="time" id="winEnd">
+      </div>
+    </div>
+    <div class="row">
+      <div class="k"></div>
+      <button id="probeNow">立即测速全部</button>
+    </div>
+  </div>
+
+  <h2>远程清单</h2>
+  <div class="card">
+    <div class="row">
+      <div class="k"><b>启用远程清单</b><small>默认关闭。开启并保存后，才会向下面的地址发起请求</small></div>
+      <input type="checkbox" id="remoteEnabled">
+    </div>
+    <div class="row">
+      <div class="k"><b>清单地址</b><small>JSON 格式，可用 <code>{"mirrors":[{"name":"x","base":"https://x"}]}</code> 或字符串数组</small></div>
+      <input type="text" id="remoteUrl" placeholder="https://raw.githubusercontent.com/.../mirrors.json" style="max-width:420px">
+    </div>
+    <div class="row">
+      <div class="k"><b>上次获取</b><small id="remoteInfo">—</small></div>
+      <button id="fetchList">立即获取</button>
+    </div>
+  </div>
+
+  <h2>哈希校验</h2>
+  <div class="card">
+    <div class="row">
+      <div class="k"><b>启用哈希校验</b><small>默认关闭。开启后才能从 GitHub 取得期望哈希并比对本地文件</small></div>
+      <input type="checkbox" id="hashEnabled">
+    </div>
+    <div class="row">
+      <div class="k"><b>下载时写校验任务</b><small>点击 GitHub 下载时，把文件名、期望哈希，以及可独立复核的来源锚点（仓库 / tag / 资产 id / 字节数）写成 <code>_mfl-tasks/&lt;文件名&gt;.task.json</code>，由本机脚本读取后比对并弹系统通知。需同时启用上面的「哈希校验」</small></div>
+      <input type="checkbox" id="hashAuto">
+    </div>
+    <div class="row">
+      <div class="k"><b>GitHub Token（可选）</b><small>只用于提高 API 限额（60/小时 → 5000/小时），只发给 api.github.com</small></div>
+      <input type="password" id="token" placeholder="github_pat_..." style="max-width:420px">
+    </div>
+    <div class="row">
+      <div class="k"><small id="hashAutoHint">任务文件落在浏览器自己的下载目录，脚本会自动找到它</small></div>
+      <button id="openVerify">打开校验页</button>
+    </div>
+  </div>
+  <div class="warnbox" style="margin-top:10px">
+    哈希校验的「自动回报」依赖一个独立脚本，<b>不随扩展打包</b>。请在扩展仓库的 <code>hooks/</code> 目录自行下载并阅读源码后再使用。
+    该脚本会把任务文件里的哈希回源 <code>api.github.com</code> 复核一次（只读 GET，可用 <code>-NoNet</code> 关闭），
+    目的是不让磁盘上可被改写的任务文件成为唯一依据。<b>请自行审查其安全性与可靠性</b>。
+  </div>
+
+  <h2>诊断</h2>
+  <div class="card">
+    <div class="row">
+      <div class="k"><b>当前解析</b><small id="diag">—</small></div>
+      <button id="reapply">重建规则</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="../lib/core.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

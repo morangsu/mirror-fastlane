@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "ff-probe",
+  "version": "0.0.1",
+  "browser_specific_settings": {
+    "gecko": { "id": "ff-probe@mirror-fastlane.test", "strict_min_version": "140.0" }
+  },
+  "permissions": ["downloads", "storage"],
+  "background": { "scripts": ["bg.js"] }
+}

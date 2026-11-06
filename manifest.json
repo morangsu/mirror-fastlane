@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "镜像快车道",
+  "version": "1.3.0",
+  "description": "为开源项目的下载链接自动选择可用镜像，并在页面上标明替换来源。",
+  "minimum_chrome_version": "121",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mirror-fastlane@example.com",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
+    }
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "downloads",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://codeload.github.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "lib/core.js",
+      "lib/idb.js",
+      "lib/gh-hash.js",
+      "lib/auto-hash.js",
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "镜像快车道"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/*"
+      ],
+      "js": [
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

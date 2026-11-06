@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>镜像快车道 · 哈希校验</title>
+<style>
+  :root { color-scheme: light dark; --bd: #d0d7de; --bg2: #f6f8fa; --muted: #57606a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bd: #30363d; --bg2: #22272e; --muted: #8b949e; }
+    body { background: #1c2128 !important; color: #e6edf3 !important; }
+    input, button { background: #22272e !important; color: #e6edf3 !important; }
+    .card { background: #22272e !important; }
+    tr:hover td { background: #262c34 !important; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 26px 20px 60px; font: 13.5px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: #1f2328; background: #fff; }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 20px; }
+  h2 { font-size: 13.5px; margin: 22px 0 8px; font-weight: 600; }
+  .card { border: 1px solid var(--bd); border-radius: 10px; padding: 14px 16px; background: var(--bg2); }
+  input[type=text] { width: 100%; padding: 6px 9px; border: 1px solid var(--bd); border-radius: 6px; font-size: 13px; }
+  input[type=file] { font-size: 12.5px; }
+  button { padding: 6px 12px; font-size: 12.5px; border: 1px solid var(--bd); border-radius: 6px; background: #f6f8fa; color: inherit; cursor: pointer; }
+  button:hover { background: #eaeef2; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button:disabled { opacity: .55; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > input { flex: 1; }
+  .kv { display: grid; grid-template-columns: 92px 1fr; gap: 6px 10px; margin-top: 10px; font-size: 12.5px; }
+  .kv div:nth-child(odd) { color: var(--muted); }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .verdict { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; display: none; }
+  .verdict.ok { display: block; background: #e6f7ea; color: #1a7f37; border: 1px solid #a7d6b3; }
+  .verdict.bad { display: block; background: #fdecee; color: #cf222e; border: 1px solid #f3b3b8; }
+  .verdict.unknown { display: block; background: #fdf6dd; color: #9a6700; border: 1px solid #eac54f; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--bd); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--bd); }
+  .tag.ok { color: #1a7f37; border-color: #a7d6b3; }
+  .tag.fail { color: #cf222e; border-color: #f3b3b8; }
+  .tag.warn { color: #9a6700; border-color: #eac54f; }
+  .tag.muted { color: var(--muted); }
+  progress { width: 100%; height: 6px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>哈希校验</h1>
+  <div class="sub">从 GitHub 取期望值，再算本地文件的实际值。文件只在本机读取，不会上传。</div>
+
+  <h2>1 · 期望哈希</h2>
+  <div class="card">
+    <div class="row">
+      <input type="text" id="releaseUrl" placeholder="粘贴 release 页面或下载直链，例如 https://github.com/owner/repo/releases/tag/v1.0.0">
+      <button id="fetchExpect" class="primary">取哈希</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="expectHash" placeholder="或直接粘贴 SHA-256（64 位十六进制）">
+    </div>
+    <div class="kv" id="expectInfo" style="display:none">
+      <div>文件名</div><div><code id="expectName">—</code></div>
+      <div>来源</div><div id="expectSource">—</div>
+    </div>
+    <div class="hint" id="expectHint">取哈希需要访问 GitHub API，首次使用会请求一次授权。已填写 Token 时限额更高。</div>
+  </div>
+
+  <h2>2 · 本地文件</h2>
+  <div class="card">
+    <input type="file" id="fileInput">
+    <progress id="prog" value="0" max="100" style="display:none"></progress>
+    <div class="kv" id="fileInfo" style="display:none">
+      <div>文件名</div><div><code id="actualName">—</code></div>
+      <div>大小</div><div id="actualSize">—</div>
+      <div>实际哈希</div><div><code id="actualHash">—</code></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+
+  <h2>3 · 校验历史（可选）</h2>
+  <div class="card">
+    <div class="row">
+      <button id="pickDir" class="primary">授权下载文件夹</button>
+      <button id="reloadOutbox">重新读取</button>
+      <button id="forgetDir">忘记文件夹</button>
+    </div>
+    <div class="kv" id="autoInfo" style="display:grid">
+      <div>任务文件</div><div id="autoState">—</div>
+      <div>下载记录</div><div id="autoScan">—</div>
+    </div>
+    <div class="hint" id="autoHint">
+      自动校验由本机脚本完成，不依赖这里：扩展在下载时写出
+      <code>_mfl-tasks\&lt;文件名&gt;.task.json</code>，脚本据此比对并弹系统通知。
+      这一块只用来<b>查看脚本写下的历史记录</b>，需要授权脚本输出所在的下载文件夹。
+    </div>
+    <div id="resultWrap" style="display:none">
+      <table>
+        <thead><tr><th>文件</th><th style="width:130px">SHA-256</th><th style="width:120px">时间</th><th style="width:64px"></th></tr></thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+    </div>
+    <div class="hint">
+      脚本不在扩展包内，请在仓库的 <code>hooks/</code> 目录自行下载并审查。
+    </div>
+  </div>
+</div>
+<script src="../lib/core.js"></script>
+<script src="../lib/sha256.js"></script>
+<script src="../lib/idb.js"></script>
+<script src="../lib/gh-hash.js"></script>
+<script src="../lib/auto-hash.js"></script>
+<script src="verify.js"></script>
+</body>
+</html>
