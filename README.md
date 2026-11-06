@@ -287,6 +287,19 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 
 4. 确定保存
 
+解释器用哪个都行，实测同一脚本（含目录探测）的启动开销：
+
+| 解释器 | 路径 | 中位耗时 |
+|---|---|---|
+| Windows PowerShell 5.1 | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | 558 ms |
+| scoop 的 pwsh 7 | `…\scoop\apps\pwsh\current\pwsh.exe` | 606 ms |
+| scoop 的 shim | `…\scoop\shims\pwsh.exe` | 651 ms |
+
+推荐 5.1：系统自带、路径恒定、最快，不受包管理器状态影响。若坚持用 scoop 的 pwsh，
+填 `apps\pwsh\current\pwsh.exe`——`current` 是 junction，升级后仍指向新版本；
+不要填 `shims\pwsh.exe`，那是多一层转发，慢 45 ms，且 scoop 重装时会重建。
+代价是：scoop 卸载、迁移盘符或 `current` 重建期间，IDM 的钩子会静默失败（IDM 只记一条 CreateProcess 错误）。
+
 IDM 会对**每一次**下载完成都调用它，脚本靠任务文件区分：没有对应任务的（非 GitHub 下载）静默退出，不弹通知、不写记录。
 建议把脚本放在 `%LOCALAPPDATA%\MirrorFastlane\` 而不是仓库目录——仓库移动或重新 clone 不影响挂载；
 更新脚本时覆盖过去，再跑一次 `check-integrity.ps1` 确认基线一致。
