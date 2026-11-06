@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Mirror Fastlane",
+    "description": "Extension name shown in the browser and on the store listing."
+  },
+  "extDescription": {
+    "message": "Rewrite GitHub release downloads to a working mirror and label the source. On-demand probing, no telemetry, optional SHA-256 check.",
+    "description": "Short description, must stay within 132 characters."
+  },
+  "extActionTitle": {
+    "message": "Mirror Fastlane",
+    "description": "Tooltip of the toolbar button."
+  }
+}

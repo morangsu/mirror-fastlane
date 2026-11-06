@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const EXT = join(ROOT, 'dist', 'edge');
 const PORT = 9345;
-const TARGET_NAME = '镜像快车道';
+// 名称已本地化（__MSG_extName__）：无头浏览器默认 en-US，中文环境是另一个值
+const TARGET_NAMES = ['镜像快车道', 'Mirror Fastlane'];
 
 const BIN = process.env.MFL_BIN || [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -93,7 +94,7 @@ try {
       const r = await browser.call('Runtime.evaluate', {
         expression: 'chrome.runtime.getManifest().name', returnByValue: true,
       }, sessionId).catch(() => null);
-      if (r && r.result && r.result.value === TARGET_NAME) {
+      if (r && r.result && TARGET_NAMES.includes(r.result.value)) {
         target = t; extId = new URL(t.url).host;
         var session = sessionId;
         break;

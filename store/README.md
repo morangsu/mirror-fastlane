@@ -8,8 +8,8 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 
 | 用途 | 文件 |
 |---|---|
-| Edge 上架包 | `packages\mirror-fastlane-edge-1.4.1.zip`（43,981 B，SHA-256 `7f593ff8…`） |
-| Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.1.zip`（44,112 B，SHA-256 `944df821…`） |
+| Edge 上架包 | `packages\mirror-fastlane-edge-1.4.2.zip`（44,789 B，SHA-256 `5539aef7…`） |
+| Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.2.zip`（44,913 B，SHA-256 `66f5f488…`） |
 | 商店 Logo 300×300 | `logo-300.png` |
 | 备用 Logo 512×512 | `logo-512.png` |
 | 截图（1280×800，4 张） | `screenshots\01-overview.png`、`02-probe-window.png`、`03-hash.png`、`04-verify.png` |
@@ -21,8 +21,8 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 
 ## Packages 页
 
-- 上传 `packages\mirror-fastlane-edge-1.4.1.zip`
-- 上传后 Partner Center 会解析 manifest，确认显示为 `镜像快车道 / 1.4.1`
+- 上传 `packages\mirror-fastlane-edge-1.4.2.zip`
+- 上传后 Partner Center 会解析 manifest，确认显示为 `镜像快车道 / 1.4.2`
 - 若提示缺图，检查 zip 根目录是否有 `manifest.json`（本包是展开的，没有外层文件夹）
 
 ## Availability 页
@@ -83,7 +83,7 @@ npm run store:shots    # 只重拍截图（会启动一次无头 Edge）
 | Tags | github, mirror, download, checksum |
 | Privacy policy | 同上的 privacy.md 链接 |
 | License | MIT |
-| 上传包 | `packages\mirror-fastlane-firefox-1.4.1.zip` |
+| 上传包 | `packages\mirror-fastlane-firefox-1.4.2.zip` |
 
 AMO 会问「是否使用构建工具」——回答是，构建命令 `node build.mjs`，源码在同仓库（无需额外上传源码包，但可在备注里写明）。
 Firefox 的扩展 ID 已定稿为 `mirror-fastlane@morangsu.github.io`，提交后不可更改。

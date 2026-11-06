@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "镜像快车道",
-  "version": "1.4.1",
-  "description": "为开源项目的下载链接自动选择可用镜像，并在页面上标明替换来源。",
+  "default_locale": "en",
+  "name": "__MSG_extName__",
+  "version": "1.4.2",
+  "description": "__MSG_extDescription__",
   "minimum_chrome_version": "121",
   "browser_specific_settings": {
     "gecko": {
@@ -43,7 +44,7 @@
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "镜像快车道"
+    "default_title": "__MSG_extActionTitle__"
   },
   "options_ui": {
     "page": "options/options.html",

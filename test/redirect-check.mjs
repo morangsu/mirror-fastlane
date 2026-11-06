@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 const EXT = join(process.cwd(), 'dist', 'edge');
 const PORT = 9347;
-const NAME = '镜像快车道';
+const NAMES = ['镜像快车道', 'Mirror Fastlane'];   // 名称已本地化，两种语言都认
 const TARGET = 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip.sha256';
 
 const BIN = process.env.MFL_BIN || [
@@ -82,7 +82,7 @@ try {
     const r = await b.call('Runtime.evaluate', {
       expression: 'chrome.runtime.getManifest().name', returnByValue: true,
     }, sessionId).catch(() => null);
-    if (r && r.result && r.result.value === NAME) { sw = t; session = sessionId; break; }
+    if (r && r.result && NAMES.includes(r.result.value)) { sw = t; session = sessionId; break; }
   }
   ok('扩展已加载', !!sw);
   if (!sw) throw new Error('扩展未加载');

@@ -287,7 +287,24 @@ try {
 group('9. 清单与文件');
 const mf = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
 eq('manifest_version', mf.manifest_version, 3);
-eq('名称', mf.name, '镜像快车道');
+// 名称/简介走 _locales，商店才能识别出「简体中文」这个可选语言
+eq('名称走本地化占位符', mf.name, '__MSG_extName__');
+eq('简介走本地化占位符', mf.description, '__MSG_extDescription__');
+eq('声明 default_locale', mf.default_locale, 'en');
+
+const locDir = join(ROOT, '_locales');
+const locales = existsSync(locDir) ? readdirSync(locDir).filter(n => statSync(join(locDir, n)).isDirectory()) : [];
+ok('至少中英两套文案', locales.includes('zh_CN') && locales.includes('en'), locales.join(','));
+for (const loc of ['zh_CN', 'en']) {
+  const msgPath = join(locDir, loc, 'messages.json');
+  if (!existsSync(msgPath)) { ok(`${loc} 有 messages.json`, false); continue; }
+  const msg = JSON.parse(readFileSync(msgPath, 'utf8'));
+  ok(`${loc} 有 extName / extDescription`,
+    !!(msg.extName && msg.extName.message && msg.extDescription && msg.extDescription.message));
+  ok(`${loc} 的简介不超过 132 字符（商店上限）`,
+    (msg.extDescription.message || '').length <= 132,
+    String((msg.extDescription.message || '').length));
+}
 ok('同时声明 service_worker 与 scripts',
   !!(mf.background && mf.background.service_worker && Array.isArray(mf.background.scripts)));
 ok('Firefox 必填 data_collection_permissions',

@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "镜像快车道",
+    "description": "扩展名称：浏览器内和商店列表里显示的名字。"
+  },
+  "extDescription": {
+    "message": "把 GitHub 下载链接自动切换到可用镜像，并在页面上标明来源。默认只按需测速，不代理网页、不收集数据；可选 SHA-256 校验。",
+    "description": "简短描述，需控制在 132 字符以内。"
+  },
+  "extActionTitle": {
+    "message": "镜像快车道",
+    "description": "工具栏按钮的悬停提示。"
+  }
+}

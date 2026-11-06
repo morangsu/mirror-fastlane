@@ -10,7 +10,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const DIST = join(ROOT, 'dist');
 const IS_MAIN = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 
-const COPY_DIRS = ['lib', 'content', 'options', 'popup', 'verify', 'data', 'icons'];
+const COPY_DIRS = ['lib', 'content', 'options', 'popup', 'verify', 'data', 'icons', '_locales'];
 const COPY_FILES = ['background.js'];
 
 /* ------------------------------- PNG 图标 ------------------------------- */

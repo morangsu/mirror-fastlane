@@ -86,7 +86,7 @@ try {
     const r = await browser.call('Runtime.evaluate', {
       expression: 'chrome.runtime.getManifest().name', returnByValue: true,
     }, sessionId).catch(() => null);
-    if (r && r.result && r.result.value === '镜像快车道') { extId = m[1]; break; }
+    if (r && r.result && ['镜像快车道', 'Mirror Fastlane'].includes(r.result.value)) { extId = m[1]; break; }
   }
   if (!extId) throw new Error('没找到扩展的 service worker');
   console.log('扩展 id:', extId);

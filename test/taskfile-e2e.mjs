@@ -106,7 +106,7 @@ try {
       const r = await browser.call('Runtime.evaluate', {
         expression: 'chrome.runtime.getManifest().name', returnByValue: true,
       }, sessionId).catch(() => null);
-      if (r && r.result && r.result.value === '镜像快车道') { sid = sessionId; break; }
+      if (r && r.result && ['镜像快车道', 'Mirror Fastlane'].includes(r.result.value)) { sid = sessionId; break; }
     } catch { /* 跳过 */ }
   }
   if (!sid) throw new Error('扩展未加载');

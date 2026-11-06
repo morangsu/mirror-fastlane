@@ -325,12 +325,17 @@ npx web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 
 ```powershell
 npm run build
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.1.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.1.zip -Force
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.2.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.2.zip -Force
 ```
 
 `hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，
 设置页里链接到 release 页，用户自己下载并审查。
+
+**本地化**：`name` / `description` / `action.default_title` 走 `_locales`（`en` 与 `zh_CN`），
+`default_locale: en`。这是商店识别「可选语言」的依据——没有 `_locales` 目录时，
+Edge 只会认出 English (United States) 一种，无法添加简体中文的商店文案。
+界面文案（设置页、校验页）目前仍是中文单语，只有名称与简介随浏览器语言切换。
 
 **扩展 ID 已定稿**：`mirror-fastlane@morangsu.github.io`（与 `zenith-newtab@morangsu.github.io` 同一命名约定，
 即 `<仓库名>@morangsu.github.io`）。AMO 首次提交后 id 不可更改，提交前请不要再动它。
