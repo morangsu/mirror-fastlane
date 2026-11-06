@@ -327,6 +327,7 @@ $('remoteUrl').addEventListener('change', async e => {
 });
 
 $('fetchList').addEventListener('click', async () => {
+  if (!state) return toast('页面还没加载完，稍等一下再点');
   // 先把输入框里的内容落盘：用户常常输入完直接点按钮，input 的 change 还没触发，
   // 后台读到的还是旧值（甚至空地址），就会报「未启用 / 地址为空」。
   const url = $('remoteUrl').value.trim();
