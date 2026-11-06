@@ -8,8 +8,8 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 
 | 用途 | 文件 |
 |---|---|
-| Edge 上架包 | `packages\mirror-fastlane-edge-1.4.3.zip`（44,789 B，SHA-256 `5539aef7…`） |
-| Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.3.zip`（44,913 B，SHA-256 `66f5f488…`） |
+| Edge 上架包 | `packages\mirror-fastlane-edge-1.4.3.zip`（45,821 B，SHA-256 `461c6498…`） |
+| Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.3.zip`（45,945 B，SHA-256 `12b4a3de…`） |
 | 商店 Logo 300×300 | `logo-300.png` |
 | 备用 Logo 512×512 | `logo-512.png` |
 | 截图（1280×800，4 张） | `screenshots\01-overview.png`、`02-probe-window.png`、`03-hash.png`、`04-verify.png` |
