@@ -11,7 +11,8 @@
     "test:redirect": "node test/redirect-check.mjs",
     "lint:firefox": "web-ext lint --source-dir dist/firefox",
     "test:taskfile": "node test/taskfile-e2e.mjs",
-    "test:hook": "node test/run-ps-tests.mjs"
+    "test:hook": "node test/run-ps-tests.mjs",
+    "check:hook": "pwsh -NoProfile -ExecutionPolicy Bypass -File hooks/check-integrity.ps1"
   },
   "license": "MIT"
 }

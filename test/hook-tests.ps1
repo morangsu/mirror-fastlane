@@ -12,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $script:hookPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'hooks\hash-hook.ps1'
+$script:integrityPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'hooks\check-integrity.ps1'
 if (-not (Test-Path -LiteralPath $script:hookPath)) {
     Write-Host "找不到脚本: $script:hookPath"
     exit 2
@@ -320,6 +321,26 @@ try {
 
     $x2 = Get-RemoteAsset -Repo 'o/r' -Tag 'v1' -AssetId 1 -AssetName 'a.zip'
     Test-Eq '-NoNet 时完全跳过联网' $x2.State 'skipped'
+
+    # --------------------------------------------------------------- 18
+    Write-Host "`n18. 脚本完整性自检（基线比对，不走 git）"
+    $d = New-Case 'c18'
+    $srcDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'hooks'
+    $tScript = Join-Path $d 'hash-hook.ps1'
+    Copy-Item -LiteralPath (Join-Path $srcDir 'hash-hook.ps1') -Destination $tScript
+    Copy-Item -LiteralPath (Join-Path $srcDir 'hash-hook.sha256') -Destination (Join-Path $d 'hash-hook.sha256')
+
+    $o1 = & $script:integrityPath -Target $tScript -NoGit *>&1 | Out-String
+    Test-Ok '基线一致时退出码 0' ($LASTEXITCODE -eq 0) $o1
+
+    Add-Content -LiteralPath $tScript -Value '# tamper'
+    $o2 = & $script:integrityPath -Target $tScript -NoGit *>&1 | Out-String
+    Test-Ok '脚本被改后退出码 1' ($LASTEXITCODE -eq 1) $o2
+    Test-Ok '明确报出不一致' ($o2 -match '不一致') $o2
+
+    & $script:integrityPath -Target $tScript -NoGit -Update *>&1 | Out-Null
+    $o3 = & $script:integrityPath -Target $tScript -NoGit *>&1 | Out-String
+    Test-Ok '重建基线后恢复通过' ($LASTEXITCODE -eq 0) $o3
 } finally {
     # 用 .NET API 删自己的临时目录，避免经过 Remove-Item 的删除钩子
     try {
