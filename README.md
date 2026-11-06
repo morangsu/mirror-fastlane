@@ -273,11 +273,18 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 **这个脚本不在扩展包内，需要你自己下载。** 使用前请阅读源码并自行审查其安全性与可靠性；作者仅保证它在开发者本人的设备上可用，不对其他环境作任何承诺。
 
 - aria2 / Motrix / Gopeed：把脚本挂到「下载完成」与「下载失败」回调
-- IDM：选项 → 下载完成后运行程序，填
+- 
+**IDM**：IDM 没有通用的「下载完成后运行程序」选项，唯一可用的钩子是「病毒检查」那一栏（官方文档明确：
+下载完成时用 `[File]` 替换成文件路径去 CreateProcess）。设置路径：
+1. 选项 → 「下载」标签页 → 「病毒检查设置」→ 编辑
+2. 程序填 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+3. 参数填（路径换成你自己的，`[File]` 原样保留）：
 
-  ```powershell
-  pwsh -NoProfile -ExecutionPolicy Bypass -File "…\hash-hook.ps1"
-  ```
+   ```
+   -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%LOCALAPPDATA%\MirrorFastlane\hash-hook.ps1" "[File]"
+   ```
+
+4. 确定保存
 
   （没装 PowerShell 7 的话，把 `pwsh` 换成 `powershell` 也能跑，脚本向下兼容 5.1）
 
