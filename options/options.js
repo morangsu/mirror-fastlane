@@ -327,11 +327,30 @@ $('remoteUrl').addEventListener('change', async e => {
 });
 
 $('fetchList').addEventListener('click', async () => {
+  // 先把输入框里的内容落盘：用户常常输入完直接点按钮，input 的 change 还没触发，
+  // 后台读到的还是旧值（甚至空地址），就会报「未启用 / 地址为空」。
+  const url = $('remoteUrl').value.trim();
+  if (url && !/^https:\/\//i.test(url)) return toast('清单地址必须是 https://');
+  const enabled = $('remoteEnabled').checked;
+  if (!enabled) return toast('请先勾选「启用远程清单」');
+  if (!url) return toast('请先填写清单地址');
+
+  await send('save-settings', {
+    patch: { remoteList: Object.assign({}, state.settings.remoteList, { enabled, url }) },
+  });
+
   $('fetchList').disabled = true;
   const r = await send('fetch-list');
   $('fetchList').disabled = false;
+
+  const REASON = {
+    'not-enabled': '未启用远程清单',
+    'no-url': '清单地址为空',
+    'all-failed': '所有来源都失败（镜像未授权或地址不可达）',
+    disabled: '未启用远程清单',
+  };
   if (r && r.ok) toast('已通过 ' + r.via + ' 获取，新增 ' + r.added + ' 个');
-  else toast('获取失败：' + ((r && r.reason) || '未知'));
+  else toast('获取失败：' + (REASON[r && r.reason] || (r && r.reason) || '未知'));
   refresh();
 });
 

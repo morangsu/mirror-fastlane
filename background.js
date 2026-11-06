@@ -24,6 +24,8 @@ const PROBE_BYTES = 262144;
 const PROBE_GAP_MS = 30 * 60 * 1000;   // 按需探测的最小间隔
 const ALARM_PROBE = 'mfl-probe';
 const ALARM_TICK = 'mfl-tick';
+const ALARM_LIST = 'mfl-list';
+const LIST_REFRESH_MS = 24 * 3600 * 1000;   // 远程清单超过这个时间没取到过就自动拉一次
 
 /* ---------------------------------- 存储 ---------------------------------- */
 
@@ -250,7 +252,8 @@ async function probeAll(reason) {
 async function fetchRemoteList() {
   const settings = await getSettings();
   const cfg = settings.remoteList || {};
-  if (!cfg.enabled || !cfg.url) return { ok: false, reason: 'disabled' };
+  if (!cfg.enabled) return { ok: false, reason: 'not-enabled' };
+  if (!cfg.url) return { ok: false, reason: 'no-url' };
 
   const mirrors = await getMirrors();
   const candidates = [];
@@ -276,8 +279,20 @@ async function fetchRemoteList() {
   return { ok: false, reason: 'all-failed' };
 }
 
-async function mergeRemoteList(data) {
-  const incoming = Array.isArray(data) ? data : (data && data.mirrors) || [];
+/** 到期才刷新远程清单：距上次成功获取超过 24h 才真的去拉 */
+async function maybeRefreshList(force) {
+  const settings = await getSettings();
+  const cfg = settings.remoteList || {};
+  if (!cfg.enabled || !cfg.url) return { ok: false, skipped: 'disabled' };
+
+  const o = await ext.storage.local.get(K.listFetched);
+  const last = (o[K.listFetched] && o[K.listFetched].at) || 0;
+  if (!force && Date.now() - last < LIST_REFRESH_MS) return { ok: false, skipped: 'fresh' };
+
+  return fetchRemoteList();
+}
+
+async function mergeRemoteList(data) {  const incoming = Array.isArray(data) ? data : (data && data.mirrors) || [];
   const cur = await getMirrors();
   const known = new Set(cur.map(m => MFL.hostOf(m.base)));
   let added = 0;
@@ -460,6 +475,15 @@ async function syncAlarms() {
 
   const tick = await ext.alarms.get(ALARM_TICK);
   if (!tick) await ext.alarms.create(ALARM_TICK, { periodInMinutes: 5 });
+
+  // 远程清单：开启且填了地址才排期，每 12 小时探一次；真正的刷新由下面的 24h 闸门决定
+  const wantList = !!(settings.remoteList && settings.remoteList.enabled && settings.remoteList.url);
+  const curList = await ext.alarms.get(ALARM_LIST);
+  if (!wantList) {
+    if (curList) await ext.alarms.clear(ALARM_LIST);
+  } else if (!curList || curList.periodInMinutes !== 720) {
+    await ext.alarms.create(ALARM_LIST, { periodInMinutes: 720 });
+  }
 }
 
 ext.alarms.onAlarm.addListener(async alarm => {
@@ -470,6 +494,8 @@ ext.alarms.onAlarm.addListener(async alarm => {
   } else if (alarm.name === ALARM_TICK) {
     // 生效时段边界：每 5 分钟校正一次规则状态
     await applyRules();
+  } else if (alarm.name === ALARM_LIST) {
+    maybeRefreshList(false).catch(() => {});
   }
 });
 
@@ -656,6 +682,8 @@ async function bootstrap() {
   await refreshPermissions();
   await syncAlarms();
   await applyRules();
+  // 浏览器启动时顺带检查一次远程清单是否过期（被 24h 闸门挡着，不会每次都拉）
+  maybeRefreshList(false).catch(() => {});
 }
 
 ext.runtime.onInstalled.addListener(() => { bootstrap().catch(() => {}); });

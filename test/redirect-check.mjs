@@ -17,6 +17,7 @@ const BIN = process.env.MFL_BIN || [
 ].find(existsSync);
 
 const profile = mkdtempSync(join(tmpdir(), 'mfl-redir-'));
+const dlDir = mkdtempSync(join(tmpdir(), 'mfl-dl-'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const child = spawn(BIN, [
@@ -73,6 +74,8 @@ try {
     await sleep(300);
   }
   const b = await connect(ver.webSocketDebuggerUrl);
+  // 下载指到临时目录：这个测试会真的下载一个资产，别落到用户下载夹
+  await b.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: false }).catch(() => {});
   await sleep(2500);
 
   const { targetInfos } = await b.call('Target.getTargets');
@@ -153,6 +156,7 @@ try {
   try { child.kill(); } catch {}
   await sleep(800);
   try { rmSync(profile, { recursive: true, force: true }); } catch {}
+  try { rmSync(dlDir, { recursive: true, force: true }); } catch {}
 }
 
 console.log('\n' + '─'.repeat(46));

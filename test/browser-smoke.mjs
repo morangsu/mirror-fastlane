@@ -22,6 +22,7 @@ const BIN = process.env.MFL_BIN || [
 if (!BIN) { console.error('找不到可加载扩展的浏览器'); process.exit(2); }
 
 const profile = mkdtempSync(join(tmpdir(), 'mfl-smoke-'));
+const dlDir = mkdtempSync(join(tmpdir(), 'mfl-dl-'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const child = spawn(BIN, [
@@ -83,6 +84,7 @@ try {
   console.log('浏览器:', ver.Browser);
 
   browser = await connect(ver.webSocketDebuggerUrl);
+  await browser.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: false }).catch(() => {});
   await sleep(2200);
 
   // 找到我们扩展的 service worker（按 manifest 名匹配，避免撞到浏览器内置扩展）

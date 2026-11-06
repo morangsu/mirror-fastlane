@@ -1,9 +1,9 @@
 /* 端到端：扩展点击下载时能否写出校验任务文件
  * 运行： node test/taskfile-e2e.mjs
- * 注意：会写入浏览器真实下载目录，测试后自动清理。
+ * 注意：下载目录用临时目录（通过首启偏好指定），不碰用户真实下载夹。
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,18 @@ const ok = (n, c, e) => {
 const eq = (n, a, b) => ok(n, a === b, 'got=' + JSON.stringify(a) + ' want=' + JSON.stringify(b));
 
 const profile = mkdtempSync(join(tmpdir(), 'mfl-task-'));
+// 隔离下载目录：扩展写任务文件会走 chrome.downloads，不受 CDP 的 setDownloadBehavior 影响，
+// 只能通过首启偏好把 default_directory 指过去——否则会往用户真实下载夹里丢 uuid.tmp。
+const BASES = ['C:/Users/YI/Downloads', 'E:/360Downloads'];
+const TMP_RE = /^[0-9a-f-]{36}\.tmp$/i;
+function snapshotTmp() {
+  const set = new Set();
+  for (const base of BASES) {
+    try { for (const n of readdirSync(base)) if (TMP_RE.test(n)) set.add(join(base, n)); } catch { /* 目录可能不存在 */ }
+  }
+  return set;
+}
+const tmpBefore = snapshotTmp();
 const child = spawn(BIN, [
   `--user-data-dir=${profile}`,
   `--load-extension=${EXT}`,
@@ -207,19 +219,30 @@ try {
   child.kill();
   await sleep(900);
 
-  // 清理测试产生的任务文件与记录
+  // 清理测试产生的任务文件与记录（含浏览器写任务文件时留下的 <guid>.tmp）
   if (KEEP) {
     console.log('  --keep：保留任务文件，跳过清理');
     console.log('  任务文件: ' + taskPath);
-  } else for (const base of ['C:/Users/YI/Downloads', 'E:/360Downloads']) {
-    for (const n of [TEST_NAME + '.task.json', 'bad_name_with_chars.zip.task.json']) {
-      const f = join(base, '_mfl-tasks', n);
-      try { if (existsSync(f)) { rmSync(f); console.log('  已清理: ' + f); } } catch { /* ignore */ }
+  } else {
+    let removedTmp = 0;
+    for (const base of BASES) {
+      for (const n of [TEST_NAME + '.task.json', 'bad_name_with_chars.zip.task.json']) {
+        const f = join(base, '_mfl-tasks', n);
+        try { if (existsSync(f)) { rmSync(f); console.log('  已清理: ' + f); } } catch { /* ignore */ }
+      }
+      try {
+        const d = join(base, '_mfl-tasks');
+        if (existsSync(d) && readdirSync(d).length === 0) { rmSync(d, { recursive: true }); console.log('  已清理空目录: ' + d); }
+      } catch { /* ignore */ }
+      try {
+        for (const n of readdirSync(base)) {
+          const f = join(base, n);
+          if (!TMP_RE.test(n) || tmpBefore.has(f)) continue;
+          rmSync(f); removedTmp++;
+        }
+      } catch { /* ignore */ }
     }
-    const d = join(base, '_mfl-tasks');
-    try {
-      if (existsSync(d) && readdirSync(d).length === 0) { rmSync(d, { recursive: true }); console.log('  已清理空目录: ' + d); }
-    } catch { /* ignore */ }
+    if (removedTmp) console.log('  已清理本轮产生的浏览器临时文件: ' + removedTmp + ' 个');
   }
   try { rmSync(profile, { recursive: true, force: true }); } catch { /* ignore */ }
 }
