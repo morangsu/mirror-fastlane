@@ -206,6 +206,44 @@ try {
     ok('设置页渲染出 10 条镜像', v.rows === 10, 'rows=' + v.rows);
     ok('设置页显示规则状态', !!v.tag && v.tag !== '—', JSON.stringify(v).slice(0, 160));
     ok('首行含镜像域名', /https?|\./.test(v.first), v.first.replace(/\s+/g, ' ').slice(0, 80));
+
+    // 回归：连续勾选「启用哈希校验」+「自动记录」，两个开关必须同时为 true。
+    // 以前第二次点击会用页面里过期的 state 拼 patch，把第一次的 enabled 覆盖回 false。
+    const hashMerge = (await pc.call('Runtime.evaluate', {
+      expression: `(async () => {
+        window.ensureApiPermission = async () => true;
+        await toggleHashFlag('enabled', { checked: true });
+        await toggleHashFlag('auto', { checked: true });
+        const s = await chrome.runtime.sendMessage({ type: 'get-state' });
+        return s.settings.hash;
+      })()`,
+      returnByValue: true, awaitPromise: true,
+    })).result.value;
+    ok('连续勾选两个哈希开关后同时生效',
+      !!(hashMerge && hashMerge.enabled && hashMerge.auto), JSON.stringify(hashMerge));
+
+    // 回归：重新加载解包扩展会清空 storage，用户常以为开关还开着。
+    // 「一键开启」必须一次把两个开关都打开，并把 checkbox / 状态条同步刷新。
+    const oneClick = (await pc.call('Runtime.evaluate', {
+      expression: `(async () => {
+        await chrome.runtime.sendMessage({ type: 'save-settings', patch: { hash: { enabled: false, auto: false } } });
+        window.ensureApiPermission = async () => true;
+        document.getElementById('enableAutoHash').click();
+        await new Promise(r => setTimeout(r, 900));
+        const s = await chrome.runtime.sendMessage({ type: 'get-state' });
+        return { hash: s.settings.hash,
+                 tag: (document.getElementById('hashStatusTag')||{}).textContent,
+                 cb1: document.getElementById('hashEnabled').checked,
+                 cb2: document.getElementById('hashAuto').checked };
+      })()`,
+      returnByValue: true, awaitPromise: true,
+    })).result.value;
+    ok('一键开启同时打开两个哈希开关',
+      !!(oneClick && oneClick.hash && oneClick.hash.enabled && oneClick.hash.auto), JSON.stringify(oneClick));
+    ok('一键开启后两个 checkbox 同步打勾',
+      !!(oneClick && oneClick.cb1 && oneClick.cb2), JSON.stringify(oneClick));
+    ok('自动校验状态条已刷新',
+      !!(oneClick && ['已就绪', '未就绪'].includes(oneClick.tag)), JSON.stringify(oneClick && oneClick.tag));
     pc.close();
   }
 

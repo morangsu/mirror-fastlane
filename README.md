@@ -23,7 +23,7 @@
 ## 安装（开发者模式）
 
 ```bash
-node build.mjs          # 产出 dist/edge 与 dist/firefox
+node build.mjs          # 产出 dist/edge、dist/firefox、dist/debug（debug 仅本机排查用）
 ```
 
 - Edge / Chrome：`edge://extensions` 或 `chrome://extensions` → 打开「开发者模式」→「加载解压缩的扩展」→ 选 `dist/edge`
@@ -302,6 +302,46 @@ IDM 遇到同名文件会提示，两种选择脚本都认：
 
 IDM 会对**每一次**下载完成都调用它，脚本靠任务文件区分：没有对应任务的（非 GitHub 下载）静默退出，不弹通知、不写记录。
 
+### 回源凭据（可选，建议配）
+
+`hash-hook.ps1` 会拿任务文件里的 `repo / tag / assetId` 回源 `api.github.com` 复核官方 digest。匿名访问按**出口 IP** 限 60 次/小时，走代理时出口常被共享，密集下载很容易撞 403，结果降级成 `pass-unverified`。配一个只读 token 即可按 token 计 5000 次/小时。
+
+两种来源，**凭据文件优先**：
+
+| 优先级 | 来源 | 说明 |
+|---|---|---|
+| 1 | 凭据文件 | 与 `hash-hook.ps1` 同目录的 `auth.txt`，或启动时 `-TokenFile` 指定 |
+| 2 | 环境变量 `GITHUB_TOKEN` | 进程级 → 用户级 `HKCU\Environment` → 系统级 `HKLM`；后两级直接读注册表，**无需重启 IDM** |
+
+**最省事：不带任何参数运行。** 脚本先提示粘贴 PAT（不回显），随后自动跑完剩余全部步骤：写入 DPAPI 密文 → 收紧 ACL → 用 IDM 同款 `powershell.exe 5.1` 读回解密 → 带 token 打一次 `api.github.com/rate_limit` 验证认证生效 → 输出路径与状态。token 不进命令行、日志、`outbox.txt` 或通知。
+
+**脚本可以从任意目录运行**（下载文件夹、临时目录、U 盘都行）。因为 `hash-hook.ps1` 只读「自己同目录的 `auth.txt`」，工具按下面顺序决定凭据写到哪：
+
+1. IDM 注册表 `HKCU\Software\DownloadManager\VScannerParameters` 里 `-File` 指向的 `hash-hook.ps1` 所在目录 —— 权威来源，与脚本当前在哪无关；
+2. 没挂载 IDM 时退到 `%LOCALAPPDATA%\MirrorFastlane\`；
+3. 再没有就写到本脚本当前所在目录（便携模式），并提示「挂载 IDM 后重新运行一次」。
+
+自检还会比对「IDM hook 默认读取的 `auth.txt` 路径」与「本次实际写入路径」，不一致时直接警告，避免配完却读不到。
+
+命令写法（`%VAR%` 是 CMD 语法，PowerShell 里要用 `$env:VAR`；用 `.cmd` 包装则两种 shell 通吃）：
+
+```
+:: CMD 提示符
+"%LOCALAPPDATA%\MirrorFastlane\set-hook-token.cmd"
+
+:: PowerShell 提示符（PS C:\...>）
+& "$env:LOCALAPPDATA\MirrorFastlane\set-hook-token.cmd"
+
+:: 脚本在下载文件夹等任意位置：双击 .cmd，或直接指定 .ps1 的实际路径
+powershell -NoProfile -ExecutionPolicy Bypass -File "<脚本所在目录>\set-hook-token.ps1"
+```
+
+`.cmd` 必须与 `set-hook-token.ps1` 同目录；只用 `.ps1` 也能独立运行。其他参数（同样可跟在 `.cmd` 后）：`-FromClipboard`（从剪贴板取 PAT，不进命令行历史）、`-NoVerify`（跳过联网自检）、`-Show`（只看解析出的路径与状态，不显示 token）、`-Remove`（删除凭据，退回环境变量）、`-TokenFile <路径>`（显式指定，但与 hook 目录不同时会警告）。
+
+只想用环境变量也行：`setx GITHUB_TOKEN <token>`；删除请用 `[Environment]::SetEnvironmentVariable('GITHUB_TOKEN', $null, 'User')`，别用 `setx VAR ""`（会留下空值）。注意环境变量会进入之后所有新进程的环境块，暴露面比凭据文件大，所以默认优先凭据文件。
+
+安全说明：token 只进 `Authorization` 头，绝不写日志、`outbox.txt` 或通知；建议用无写权限 scope 的只读 PAT。DPAPI 密文绑定当前 Windows 用户，换用户或重装系统后需重新运行工具。
+
 这份配置存在 `HKCU\Software\DownloadManager` 的两个值里：`VScannerProgram`（解释器）与 `VScannerParameters`（参数）。
 随时可以自检：
 
@@ -315,8 +355,9 @@ npm run check:idm
 建议把脚本放在 `%LOCALAPPDATA%\MirrorFastlane\` 而不是仓库目录——仓库移动或重新 clone 不影响挂载；
 更新脚本时覆盖过去，再跑一次 `check-integrity.ps1` 确认基线一致。
 
-失败回调再加 `-Status fail`。脚本只做三件事：读本地文件、算 SHA-256、写一行文本 / 弹一条通知。
-不联网、不上传、不执行下载内容。
+失败回调再加 `-Status fail`。脚本读取本地文件、计算 SHA-256、把结果写入 `outbox.txt` 并弹通知；
+此外**默认向 `api.github.com` 发一次只读 GET 回源复核官方 digest**（可用 `-NoNet` 完全关闭联网，
+回源凭据见上文「回源凭据」一节）。它不上传文件内容、不执行下载内容、不扫描任务目录之外的文件。
 
 通知按以下顺序降级，任一成功即可：BurntToast 模块 → WinRT Toast（PowerShell 5.1）→ 托盘气泡。
 三者都不可用时静默跳过，不影响校验与 outbox 记录。
@@ -324,17 +365,20 @@ npm run check:idm
 ## 测试
 
 ```bash
-node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描（156 项）
-node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（23 项）
+npm test                       # 全套（build + 以下 7 组）
+node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（185 项）
+node test/debug-log-test.mjs   # 调试日志并发写入与脱敏（4 项）
+node test/content-state-test.mjs # 内容脚本状态刷新（7 项）
+node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（27 项）
 node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（8 项）
 node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（18 项）
-node test/run-ps-tests.mjs     # 脚本逻辑：19 组用例、57 项断言（调用 PowerShell 跑）
-npx web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
+node test/run-ps-tests.mjs     # 脚本逻辑（79 项断言，自动找 pwsh / powershell）
+npx --yes web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 ```
 
-单元测试 156 项、脚本测试 57 项，其余 49 项（冒烟 23 + 改写 8 + 任务文件 18），合计 **262 项**。
+单元测试 185 项、脚本测试 79 项，其余 64 项（debug 日志 4 + 内容脚本 7 + 冒烟 27 + 改写 8 + 任务文件 18），合计 **328 项**。
 
-`test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完 19 组用例：
+`test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完全部用例：
 
 ```
 任务+子文件夹 / 期望值不一致 / 无期望值 / 重命名副本 (1) / 多副本取最新 /
@@ -358,9 +402,12 @@ npx web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 打包（不依赖第三方工具）：
 
 ```powershell
-npm run build
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.2.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.2.zip -Force
+npm run store       # build + logo + 截图 + 打包，一步生成 store/packages/ 下三个 zip
+npm run pack        # 只重新打包（不重拍截图）
+
+# 也可手工打包（不依赖脚本自带的 zip 实现）：
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.5.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.5.zip -Force
 ```
 
 `hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，

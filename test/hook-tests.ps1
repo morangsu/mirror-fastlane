@@ -152,6 +152,27 @@ try {
     Test-Ok '校验的是新副本' ($r.Lines[0] -match 'pkg \(1\)\.zip') $r.Lines[0]
     Test-Ok '用的是新文件的哈希' ($r.Lines[0].Contains($hNew)) $r.Lines[0]
 
+    # ---------------------------------------------------------------- 4b
+    Write-Host "`n4b. IDM 的下划线副本命名 (foo_2.zip)"
+    $d = New-Case 'c4b'
+    $old = Join-Path $d 'Archives\pkg.zip'
+    New-File $old 'OLD version' | Out-Null
+    (Get-Item -LiteralPath $old).LastWriteTime = (Get-Date).AddHours(-1)
+    $copy = Join-Path $d 'Programs\pkg_2.zip'
+    $h2 = New-File $copy 'NEW version by IDM'
+    New-TaskFile $d 'pkg.zip' $h2 | Out-Null
+
+    Test-Ok '名称匹配：原名' (Test-NameMatch -TaskName 'pkg.zip' -FileName 'pkg.zip')
+    Test-Ok '名称匹配：IDM _2' (Test-NameMatch -TaskName 'pkg.zip' -FileName 'pkg_2.zip')
+    Test-Ok '名称匹配：浏览器 (1)' (Test-NameMatch -TaskName 'pkg.zip' -FileName 'pkg (1).zip')
+    Test-Ok '名称匹配：短横线 -3' (Test-NameMatch -TaskName 'pkg.zip' -FileName 'pkg-3.zip')
+    Test-Ok '名称匹配：无关文件不匹配' (-not (Test-NameMatch -TaskName 'pkg.zip' -FileName 'other.zip'))
+
+    $r = Invoke-Hook $d -FilePath $copy -NoNet
+    Test-Eq '显式路径命中 _2 副本，写一条记录' ($r.Lines.Count) 1
+    Test-Ok '校验的是 _2 副本' ($r.Lines[0] -match 'pkg_2\.zip') ($r.Lines -join '|')
+    Test-Ok '用的是副本文件的哈希' ($r.Lines[0].Contains($h2)) ($r.Lines -join '|')
+
     # ---------------------------------------------------------------- 5
     Write-Host "`n5. 多个副本取最新"
     $d = New-Case 'c5'
@@ -366,6 +387,101 @@ try {
     $r3 = Invoke-Hook $d -ShowLog
     Test-Eq '无任务 + 无显式路径时也零记录' ($r3.Lines.Count) 0
     Test-Ok '提示可用 -ScanRecent' ($r3.Output -match 'ScanRecent') $r3.Output
+
+    # --------------------------------------------------------------- 20
+    Write-Host "`n20. 回源凭据：凭据文件优先，环境变量兜底"
+    $d20 = New-Case 'c20'
+    $tf = Join-Path $d20 'auth.txt'
+    $absent = Join-Path $d20 'absent-auth.txt'
+    $envName = 'MFL_TEST_HOOK_TOKEN'
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $origDefault = $script:DefaultTokenFile
+    $origProc = [Environment]::GetEnvironmentVariable($envName, 'Process')
+
+    try {
+        [Environment]::SetEnvironmentVariable($envName, $null, 'Process')
+        [Environment]::SetEnvironmentVariable($envName, $null, 'User')
+        $script:DefaultTokenFile = $absent
+
+        Test-Eq '都为空 → 匿名' (Get-ApiToken -EnvName $envName) ''
+
+        [System.IO.File]::WriteAllText($tf, 'file-token-1234567890' + "`n", $utf8)
+        $script:DefaultTokenFile = $tf
+        Test-Eq '只有凭据文件 → 用文件' (Get-ApiToken -EnvName $envName) 'file-token-1234567890'
+
+        [Environment]::SetEnvironmentVariable($envName, 'process-token-123456', 'Process')
+        Test-Eq '文件 + 进程 env → 文件优先' (Get-ApiToken -EnvName $envName) 'file-token-1234567890'
+
+        [System.IO.File]::Delete($tf)
+        $script:DefaultTokenFile = $absent
+        Test-Eq '无文件 → 回退进程级 env' (Get-ApiToken -EnvName $envName) 'process-token-123456'
+
+        [Environment]::SetEnvironmentVariable($envName, $null, 'Process')
+        [Environment]::SetEnvironmentVariable($envName, 'user-reg-token-123456', 'User')
+        Test-Eq '进程无值 → 读用户级注册表（不依赖继承）' (Get-ApiToken -EnvName $envName) 'user-reg-token-123456'
+
+        [System.IO.File]::WriteAllText($tf, 'file-token-abcdefgh' + "`n", $utf8)
+        $script:DefaultTokenFile = $tf
+        Test-Eq '用户级 env 存在时文件仍优先' (Get-ApiToken -EnvName $envName) 'file-token-abcdefgh'
+
+        [System.IO.File]::WriteAllText($tf, 'not a valid token' + "`n", $utf8)
+        Test-Eq '文件内容含空白 → 判无效并回退' (Get-ApiToken -EnvName $envName) 'user-reg-token-123456'
+
+        [System.IO.File]::WriteAllText($tf, "# comment`n`n  file-with-comment-123  `n", $utf8)
+        Test-Eq '跳过注释/空行并 Trim' (Get-ApiToken -EnvName $envName) 'file-with-comment-123'
+
+        $tf2 = Join-Path $d20 'custom.txt'
+        [System.IO.File]::WriteAllText($tf2, 'custom-token-123456' + "`n", $utf8)
+        Test-Eq '自定义 -TokenFile 生效' (Get-ApiToken -TokenFile $tf2 -EnvName $envName) 'custom-token-123456'
+
+        # DPAPI(CurrentUser) 密文
+        try {
+            Add-Type -AssemblyName System.Security -ErrorAction SilentlyContinue
+            if (-not ('System.Security.Cryptography.ProtectedData' -as [type])) {
+                Add-Type -AssemblyName System.Security.Cryptography.ProtectedData -ErrorAction Stop
+            }
+            $secret = 'dpapi-token-123456'
+            $enc = [System.Security.Cryptography.ProtectedData]::Protect(
+                [System.Text.Encoding]::UTF8.GetBytes($secret), $null,
+                [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+            [System.IO.File]::WriteAllText($tf, 'dpapi:' + [Convert]::ToBase64String($enc) + "`n", $utf8)
+            Test-Eq 'DPAPI(CurrentUser) 密文可读回' (Get-ApiToken -EnvName $envName) $secret
+        } catch {
+            Test-Ok 'DPAPI(CurrentUser) 密文可读回' $false ('加密失败: ' + $_.Exception.Message)
+        }
+
+        $sysPath = [string][Environment]::GetEnvironmentVariable('Path', 'Machine')
+        Test-Ok '普通用户可读系统级环境变量' ($sysPath.Length -gt 0)
+
+        # 用同名函数盖掉 Invoke-RestMethod，验证 token 真的进了 Authorization 头
+        [System.IO.File]::WriteAllText($tf, 'header-token-123456' + "`n", $utf8)
+        $script:DefaultTokenFile = $tf
+        $script:RemoteCache.Clear()
+        $script:capturedAuth = ''
+        function Invoke-RestMethod {
+            param($Uri, $Headers, $TimeoutSec, $ErrorAction)
+            $script:capturedAuth = [string]$Headers['Authorization']
+            return [pscustomobject]@{ digest = 'sha256:' + ('a' * 64); size = 1 }
+        }
+        $NoNet = $false
+        try {
+            $rm = Get-RemoteAsset -Repo 'o/r' -Tag 'v1' -AssetId 77 -AssetName 'a.zip'
+            Test-Eq '凭据文件 token 进入 Authorization 头' $script:capturedAuth 'Bearer header-token-123456'
+            Test-Eq 'mock 下按 id 命中 digest' $rm.State 'ok'
+        } finally {
+            $NoNet = $true
+            Remove-Item function:Invoke-RestMethod -ErrorAction SilentlyContinue
+            $script:RemoteCache.Clear()
+        }
+
+        $src = [System.IO.File]::ReadAllText($script:hookPath)
+        Test-Ok '源码没把 token 值拼进日志字符串' ($src -notmatch 'Write-Log[^\r\n]*\$tok\b')
+    } finally {
+        [Environment]::SetEnvironmentVariable($envName, $origProc, 'Process')
+        [Environment]::SetEnvironmentVariable($envName, $null, 'User')
+        $script:DefaultTokenFile = $origDefault
+        $NoNet = $true
+    }
 } finally {
     # 用 .NET API 删自己的临时目录，避免经过 Remove-Item 的删除钩子
     try {

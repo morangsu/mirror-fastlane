@@ -1,22 +1,25 @@
 {
   "name": "mirror-fastlane",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "为 GitHub 下载链接自动选择可用镜像的浏览器扩展（Edge / Chrome / Firefox）",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node test/run-tests.mjs && node test/browser-smoke.mjs && node test/redirect-check.mjs && node test/taskfile-e2e.mjs && node test/run-ps-tests.mjs",
+    "test": "node build.mjs && node test/run-tests.mjs && node test/debug-log-test.mjs && node test/content-state-test.mjs && node test/browser-smoke.mjs && node test/redirect-check.mjs && node test/taskfile-e2e.mjs && node test/run-ps-tests.mjs",
     "test:unit": "node test/run-tests.mjs",
+    "test:debuglog": "node test/debug-log-test.mjs",
+    "test:content": "node test/content-state-test.mjs",
     "test:browser": "node test/browser-smoke.mjs",
     "test:redirect": "node test/redirect-check.mjs",
-    "lint:firefox": "web-ext lint --source-dir dist/firefox",
+    "lint:firefox": "npx --yes web-ext lint --source-dir dist/firefox",
     "test:taskfile": "node test/taskfile-e2e.mjs",
     "test:hook": "node test/run-ps-tests.mjs",
-    "check:hook": "pwsh -NoProfile -ExecutionPolicy Bypass -File hooks/check-integrity.ps1",
+    "check:hook": "powershell -NoProfile -ExecutionPolicy Bypass -File hooks/check-integrity.ps1",
     "check:idm": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-idm.ps1",
     "store:assets": "node tools/store-assets.mjs",
     "store:shots": "node tools/store-shots.mjs",
-    "store": "node build.mjs && node tools/store-assets.mjs && node tools/store-shots.mjs"
+    "pack": "node tools/pack.mjs",
+    "store": "node build.mjs && node tools/store-assets.mjs && node tools/store-shots.mjs && node tools/pack.mjs"
   },
   "license": "MIT"
 }

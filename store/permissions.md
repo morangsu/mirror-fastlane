@@ -68,6 +68,8 @@ Required hosts — the only two the extension touches automatically:
 • https://codeload.github.com/* — the same rewriting for source archives (feature off by default).
 
 Optional host permission https://*/* is NOT granted at install. It is requested per-origin from the options page, only for mirror domains the user adds, and only to run speed tests against them. Declining it does not break the core feature: rewriting works without host access to the mirror, the extension simply cannot rank mirrors automatically.
+
+• https://api.github.com/* — also covered by that optional permission, but requested separately and dynamically only when the user enables hash verification. The extension then makes a read-only GET for the release asset's official SHA-256 digest; it never writes to GitHub and never uses this origin for mirror probing. It is not granted at install, and declining it disables hash verification while leaving rewriting untouched. A user-supplied read-only token, if any, is sent only in the Authorization header of that request.
 ```
 
 （718 字符）

@@ -2,6 +2,7 @@
 'use strict';
 
 const ext = (typeof browser !== 'undefined' && browser.runtime) ? browser : chrome;
+const dbg = (area, msg, data) => { if (typeof DBG !== 'undefined') DBG.log(area, msg, data); };
 
 const $ = id => document.getElementById(id);
 
@@ -45,21 +46,30 @@ async function refresh() {
 }
 
 $('enabled').addEventListener('change', async e => {
+  dbg('ui', '弹窗 → 总开关', { checked: e.target.checked });
   await ext.runtime.sendMessage({ type: 'save-settings', patch: { enabled: e.target.checked } });
   refresh();
 });
 
 $('open').addEventListener('click', () => {
+  dbg('ui', '弹窗 → 打开设置');
   ext.runtime.openOptionsPage();
 });
 
 $('probeNow').addEventListener('click', async () => {
+  dbg('ui', '弹窗 → 立即测速');
   $('probeNow').disabled = true;
   $('probeNow').textContent = '测速中…';
-  await ext.runtime.sendMessage({ type: 'probe-all' });
+  try {
+    const r = await ext.runtime.sendMessage({ type: 'probe-all' });
+    dbg('ui', '弹窗 → 测速结果', { probed: r && r.probed, rules: r && r.rules && r.rules.count });
+  } catch (e) {
+    dbg('ui', '弹窗 → 测速失败', String(e && e.message ? e.message : e));
+  }
   $('probeNow').disabled = false;
   $('probeNow').textContent = '立即测速';
   refresh();
 });
 
+dbg('ui', '弹窗已打开');
 refresh();

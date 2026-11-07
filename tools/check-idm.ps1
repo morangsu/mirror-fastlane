@@ -88,6 +88,31 @@ else { Bad '参数里没有 [File]，IDM 不会把下载文件的路径传进来
 if ($args_ -match '-WindowStyle\s+Hidden') { Ok '窗口隐藏已设置（不会每次下载弹黑框）' }
 else { Warn '没设 -WindowStyle Hidden，下载完成时可能闪一下窗口' }
 
+# 5) 回源凭据状态（只报状态，不算钩子配置错误）
+if ($scriptPath -and (Test-Path -LiteralPath $scriptPath)) {
+    $auth = Join-Path (Split-Path -Parent $scriptPath) 'auth.txt'
+    if (Test-Path -LiteralPath $auth -PathType Leaf) {
+        $first = ([System.IO.File]::ReadAllLines($auth, [System.Text.Encoding]::UTF8) |
+            Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') } | Select-Object -First 1)
+        $fmt = if ($first -and $first.Trim().StartsWith('dpapi:')) { 'DPAPI 密文' } else { '明文' }
+        Ok "回源凭据文件存在（$fmt，优先使用）"
+    } else {
+        Warn '没有回源凭据文件 auth.txt'
+    }
+    $hits = @()
+    foreach ($scope in @('Process', 'User', 'Machine')) {
+        try {
+            $v = [string][Environment]::GetEnvironmentVariable('GITHUB_TOKEN', $scope)
+            if ($v -and $v.Trim()) { $hits += "$scope($($v.Trim().Length) 字符)" }
+        } catch { }
+    }
+    if ($hits.Count) { Ok "GITHUB_TOKEN 已配置：$($hits -join ', ')" }
+    else { Warn 'GITHUB_TOKEN 未配置；匿名回源按出口 IP 限 60 次/小时，可能降级为 pass-unverified' }
+    if (-not (Test-Path -LiteralPath $auth -PathType Leaf) -and -not $hits.Count) {
+        Say '   配置：运行同目录 set-hook-token.cmd，按提示粘贴 PAT 即可自动完成写入与自检'
+    }
+}
+
 Say ''
 if ($fail -eq 0) { Say '结论：IDM 钩子配置有效。' -ForegroundColor Green; exit 0 }
 Say '结论：配置有问题，按上面红字修。' -ForegroundColor Red

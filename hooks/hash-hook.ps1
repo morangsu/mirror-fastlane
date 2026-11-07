@@ -14,10 +14,18 @@
 # 也可用 -DownloadDir 显式指定；下载文件允许位于下载目录的子文件夹（IDM 分类存放）。
 #
 # 用法示例：
-#   IDM：选项 → 下载完成后运行程序
-#        pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\path\hash-hook.ps1"
+#   IDM：选项 → 下载 → 病毒检查设置（用 [File] 传文件路径）
+#        pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\path\hash-hook.ps1" "[File]"
 #   IDM 失败回调：同上，末尾加 -Status fail
 #   aria2：--on-download-complete="C:\path\hash-hook.ps1"（会把文件路径作为参数传入）
+#
+# 回源凭据（可选，用来避开 GitHub 匿名 API 的 60 次/小时限额）：
+#   优先级 1) 凭据文件：默认与本脚本同目录的 auth.txt，可用 -TokenFile 指定；
+#              内容可以是明文 token，也可以是 "dpapi:" + Base64（CurrentUser 加密）。
+#              用同目录的 set-hook-token.ps1 写入，它会自动收紧文件 ACL。
+#   优先级 2) 环境变量 GITHUB_TOKEN：进程级 → 用户级(HKCU) → 系统级(HKLM)。
+#              后两级直接读注册表，不要求重启下载器主进程。
+#   两者都没有时退回匿名访问；token 只进 Authorization 头，绝不写日志 / outbox / 通知。
 #
 # 安全提示：
 #   本脚本只做四件事：读本地文件、计算 SHA-256、写一行文本 / 弹一条通知、
@@ -40,6 +48,7 @@ param(
     [string]$Outbox = '',
     [string]$DownloadDir = '',
     [string]$TaskDir = '',
+    [string]$TokenFile = '',
     [ValidateSet('auto', 'ok', 'fail')]
     [string]$Status = 'auto',
     [switch]$NoNotify,
@@ -59,6 +68,8 @@ $MaxWaitSeconds = 300
 $RecentMinutes = 30
 $TempExt = @('.tmp', '.part', '.partial', '.dwl', '.dwl2', '.aria2', '.!ut', '.crdownload', '.opdownload')
 $TaskFolderName = '_mfl-tasks'
+# 在脚本顶层算好，避免函数内 $PSScriptRoot 受调用方作用域影响（测试里是 dot-source）
+$script:DefaultTokenFile = Join-Path $PSScriptRoot 'auth.txt'
 
 #region 通用工具
 
@@ -323,6 +334,38 @@ function Get-CanonicalName {
     return ($base + $ext).ToLowerInvariant()
 }
 
+function Get-NameVariants {
+    # 下载器的重名规则不止一种：
+    #   IDM / aria2 常用  foo_2.zip、foo-2.zip
+    #   部分浏览器用    foo (2).zip
+    # 官方资产名本身可能带 _2，所以这里不改写原名，只在"原名对不上"时多给一个候选。
+    param([string]$Name)
+    $set = New-Object System.Collections.Generic.List[string]
+    if (-not $Name) { return $set.ToArray() }
+
+    $canon = Get-CanonicalName $Name
+    if ($canon -and -not $set.Contains($canon)) { $set.Add($canon) }
+
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($canon)
+    $ext = [System.IO.Path]::GetExtension($canon)
+    $stripped = [regex]::Replace($base, '[_-]\d+$', '')
+    if ($stripped -ne $base) {
+        $alt = ($stripped + $ext).ToLowerInvariant()
+        if (-not $set.Contains($alt)) { $set.Add($alt) }
+    }
+    return $set.ToArray()
+}
+
+function Test-NameMatch {
+    # 任务名 ↔ 下载文件名：原名精确匹配优先，副本后缀作为兜底
+    param([string]$TaskName, [string]$FileName)
+    $a = @(Get-NameVariants $TaskName)
+    foreach ($v in @(Get-NameVariants $FileName)) {
+        if ($a -contains $v) { return $true }
+    }
+    return $false
+}
+
 function Find-DownloadedFile {
     <#
         找某个任务对应的下载文件，能处理重复下载的两种情况：
@@ -336,8 +379,8 @@ function Find-DownloadedFile {
     $ext = [System.IO.Path]::GetExtension($Name)
     if (-not $base) { return $null }
 
-    # 名字 (1).zip / 名字 (2).zip / 名字.zip
-    $strict = '^' + [regex]::Escape($base) + ' \(\d+\)' + [regex]::Escape($ext) + '$'
+    # 名字 (1).zip / 名字_2.zip / 名字-2.zip / 名字.zip
+    $strict = '^' + [regex]::Escape($base) + '(?:\s+\(\d+\)|[_-]\d+)?' + [regex]::Escape($ext) + '$'
     $exact = [System.Management.Automation.WildcardPattern]::Escape($Name)
 
     # 任务时间往前放 5 秒，容忍文件系统时间戳精度
@@ -355,7 +398,9 @@ function Find-DownloadedFile {
         # 先用通配符把候选缩到很小，再逐个精确判断，避免全目录正则扫描
         $candidates = @()
         $candidates += Get-ChildItem -LiteralPath $dir -Recurse -File -Filter $exact -ErrorAction SilentlyContinue
-        $candidates += Get-ChildItem -LiteralPath $dir -Recurse -File -Filter "$base (*)$ext" -ErrorAction SilentlyContinue
+        $candidates += Get-ChildItem -LiteralPath $dir -Recurse -File -Filter "${base} (*)$ext" -ErrorAction SilentlyContinue
+        $candidates += Get-ChildItem -LiteralPath $dir -Recurse -File -Filter "${base}_*$ext" -ErrorAction SilentlyContinue
+        $candidates += Get-ChildItem -LiteralPath $dir -Recurse -File -Filter "${base}-*$ext" -ErrorAction SilentlyContinue
 
         foreach ($f in $candidates) {
             if ($f.FullName -match "\\$([regex]::Escape($TaskFolderName))\\") { continue }
@@ -551,6 +596,81 @@ function Get-FileSha256 {
 $script:ApiBase = 'https://api.github.com'
 $script:RemoteCache = @{}
 
+#region 回源凭据：凭据文件优先，环境变量兜底
+
+function Test-TokenShape {
+    # 只做基本合法性检查，不强制 GitHub 的 token 前缀（也允许其他认证形式）
+    param([string]$Value)
+    if (-not $Value) { return $false }
+    $v = $Value.Trim()
+    if ($v.Length -lt 8 -or $v.Length -gt 512) { return $false }
+    if ($v -match '\s') { return $false }
+    return $true
+}
+
+function Read-TokenFile {
+    # 明文，或 "dpapi:" + Base64（ProtectedData / CurrentUser，仅当前用户可解）。
+    # 允许在文件里写 # 注释，取第一行有效内容；读失败一律当作"没有凭据"。
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    try {
+        $raw = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+    } catch { return '' }
+    if (-not $raw) { return '' }
+
+    $line = ''
+    foreach ($l in ($raw -split "`r?`n")) {
+        $t = $l.Trim()
+        if (-not $t -or $t.StartsWith('#')) { continue }
+        $line = $t
+        break
+    }
+    if (-not $line) { return '' }
+
+    if ($line.StartsWith('dpapi:')) {
+        try {
+            Add-Type -AssemblyName System.Security -ErrorAction SilentlyContinue
+            $bytes = [Convert]::FromBase64String($line.Substring(6).Trim())
+            $plain = [System.Security.Cryptography.ProtectedData]::Unprotect(
+                $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+            return [System.Text.Encoding]::UTF8.GetString($plain).Trim()
+        } catch { return '' }
+    }
+    return $line
+}
+
+function Get-ApiToken {
+    <#
+      优先级（用户指定「凭据文件优先」）：
+        1) -TokenFile 指定的文件 → 默认 $script:DefaultTokenFile（脚本同目录 auth.txt）
+        2) 环境变量：Process → User(HKCU\Environment) → Machine(HKLM\...\Environment)
+      后两级直接读注册表，因此 setx 之后不必重启下载器主进程；每次下载回调都是新进程，
+      token 轮换后下一次回调立即生效。token 绝不写进日志 / outbox / 通知。
+    #>
+    param(
+        [string]$TokenFile = '',
+        [string]$EnvName = 'GITHUB_TOKEN'
+    )
+
+    $paths = @()
+    if ($TokenFile) { $paths += $TokenFile }
+    if ($paths -notcontains $script:DefaultTokenFile) { $paths += $script:DefaultTokenFile }
+    foreach ($p in $paths) {
+        $v = Read-TokenFile -Path $p
+        if (Test-TokenShape $v) { return $v.Trim() }
+    }
+
+    foreach ($scope in @('Process', 'User', 'Machine')) {
+        try {
+            $v = [string][Environment]::GetEnvironmentVariable($EnvName, $scope)
+        } catch { continue }
+        if (Test-TokenShape $v) { return $v.Trim() }
+    }
+    return ''
+}
+
+#endregion
+
 function New-TrustResult {
     param([string]$State, [string]$Digest = '', [long]$Size = 0, [string]$Note = '')
     return [pscustomobject]@{ State = $State; Digest = $Digest; Size = $Size; Note = $Note }
@@ -581,8 +701,8 @@ function Get-RemoteAsset {
     if ($script:RemoteCache.ContainsKey($key)) { return $script:RemoteCache[$key] }
 
     $headers = @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'mfl-hash-hook' }
-    $tok = [string]$env:GITHUB_TOKEN
-    if ($tok) { $headers['Authorization'] = "Bearer $tok" }
+    $tok = Get-ApiToken -TokenFile $TokenFile
+    if ($tok) { $headers['Authorization'] = 'Bearer ' + $tok }
 
     # 地址前缀写死，任务文件无法把请求引到别的主机
     #
@@ -616,7 +736,14 @@ function Get-RemoteAsset {
 
     if (-not $resp) {
         $msg = $lastErr
-        if ($msg -match '40[13]|429') { $msg = 'API 限速或凭证不足' }
+        if ($msg -match '40[13]|429') {
+            # 匿名访问按出口 IP 限 60 次/小时，代理节点被别人用满就会 403；
+            # 说清怎么解除，比只写「凭证不足」有用
+            $msg = if ($tok) { 'API 限速或凭证不被接受' }
+                   else { '匿名 API 限额用尽（403/429）；配置 auth.txt 或 GITHUB_TOKEN 可解除' }
+        }
+        $mode = if ($tok) { '已带凭据' } else { '匿名' }
+        Write-Log ("回源失败（{0}）：{1}" -f $mode, $msg)
         $r = New-TrustResult 'unavailable' -Note ("回源失败：" + $msg)
         $script:RemoteCache[$key] = $r
         return $r
@@ -827,7 +954,7 @@ try {
         if ($leaf) {
             foreach ($t in (Get-TaskFiles -Dirs $dirs)) {
                 $j = Read-TaskFile $t.File.FullName
-                if ($j -and $j.name -and ((Get-CanonicalName $j.name) -eq (Get-CanonicalName $leaf))) { $hasTask = $true; break }
+                if ($j -and $j.name -and (Test-NameMatch -TaskName $j.name -FileName $leaf)) { $hasTask = $true; break }
             }
         }
 
@@ -859,8 +986,9 @@ try {
         $taskHit = $false
         foreach ($t in (Get-TaskFiles -Dirs $dirs)) {
             $j = Read-TaskFile $t.File.FullName
-            # 下载器会把重名文件改叫 "名字 (1).zip"，任务里记的是原名，所以要按规范化名比
-            if ($j -and $j.name -and ((Get-CanonicalName $j.name) -eq (Get-CanonicalName $leaf))) {
+            # 下载器会把重名文件改叫 "名字 (1).zip" / "名字_2.zip"，任务里记的是原名，
+            # 所以要同时接受几种副本命名（Test-NameMatch 里原名精确匹配优先）。
+            if ($j -and $j.name -and (Test-NameMatch -TaskName $j.name -FileName $leaf)) {
                 # 命中任务就算"这次要管的下载"，即使扩展没取到期望哈希
                 $taskHit = $true
                 $taskFile = $t.File.FullName
@@ -868,8 +996,9 @@ try {
                     $expected = [string]$j.expected
                     $source = if ($j.source) { [string]$j.source } else { '公告值' }
                     if ($j.size) { try { $expSize = [long]$j.size } catch { $expSize = 0 } }
+                    # 回源要用官方资产名，不能用下载器改过的副本名（如 foo_2.zip）
                     $remote = Get-RemoteAsset -Repo ([string]$j.repo) -Tag ([string]$j.tag) `
-                        -AssetId ([long]$(if ($j.assetId) { $j.assetId } else { 0 })) -AssetName $leaf
+                        -AssetId ([long]$(if ($j.assetId) { $j.assetId } else { 0 })) -AssetName ([string]$j.name)
                 }
                 break
             }

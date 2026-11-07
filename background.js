@@ -2,10 +2,12 @@
 'use strict';
 
 if (typeof importScripts === 'function' && typeof MFL === 'undefined') {
-  importScripts('lib/core.js', 'lib/idb.js', 'lib/gh-hash.js', 'lib/auto-hash.js');
+  importScripts('lib/core.js', 'lib/idb.js', 'lib/gh-hash.js', 'lib/auto-hash.js', 'lib/debug-log.js');
 }
 
 const ext = (typeof browser !== 'undefined' && browser.runtime) ? browser : chrome;
+// 调试日志：正式包里 DBG 存在但 enabled=false，所有调用都是空操作
+const dbg = (area, msg, data) => { if (typeof DBG !== 'undefined') DBG.log(area, msg, data); };
 
 const K = {
   settings: 'settings',
@@ -119,6 +121,10 @@ async function doApplyRules() {
   const archive = active && useArchive ? brief(best.archive) : null;
 
   setBadge(active ? (want.length ? 'ON' : '!') : '', active ? (want.length ? '#1a7f37' : '#b54708') : '#6b7280');
+  dbg('rules', '规则重建完成', {
+    count: want.length, active, split: !!best.split,
+    best: primary && primary.base, archive: archive && archive.base,
+  });
   await ext.storage.local.set({
     ruleInfo: {
       count: want.length,
@@ -252,11 +258,12 @@ async function probeAll(reason) {
 async function fetchRemoteList() {
   const settings = await getSettings();
   const cfg = settings.remoteList || {};
-  if (!cfg.enabled) return { ok: false, reason: 'not-enabled' };
+  if (!cfg.enabled) { dbg('list', '远程清单未启用，直接返回'); return { ok: false, reason: 'not-enabled' }; }
 
   // 地址留空就用默认（仓库里的 mirrors.json），不用手填
   const rawUrl = String(cfg.url || MFL.DEFAULT_SETTINGS.remoteList.url).trim();
   if (!rawUrl) return { ok: false, reason: 'no-url' };
+  dbg('list', '开始获取远程清单', { url: rawUrl, enabled: cfg.enabled });
 
   const mirrors = await getMirrors();
   const candidates = [];
@@ -265,16 +272,22 @@ async function fetchRemoteList() {
   candidates.push({ via: '直连', url: rawUrl });
 
   const tried = [];
+  dbg('list', '候选来源', candidates.map(c => c.via));
   for (const c of candidates) {
     try {
       const res = await fetch(c.url, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10000) });
-      if (!res.ok) { tried.push({ via: c.via, err: 'HTTP ' + res.status }); continue; }
+      if (!res.ok) {
+        tried.push({ via: c.via, err: 'HTTP ' + res.status });
+        dbg('list', '清单来源失败', { via: c.via, err: 'HTTP ' + res.status, url: c.url });
+        continue;
+      }
       const data = await res.json();
       const added = await mergeRemoteList(data);
       await ext.storage.local.set({
         [K.listFetched]: { at: Date.now(), via: c.via, added, ok: true },
       });
       await applyRules();
+      dbg('list', '清单获取成功', { via: c.via, added });
       return { ok: true, via: c.via, added };
     } catch (e) {
       // 把每个来源的失败原因带回去，界面才能说清是哪一步挂了
@@ -282,9 +295,11 @@ async function fetchRemoteList() {
         : (e && (e.name === 'SyntaxError' || /JSON/i.test(String(e.message)))) ? '返回的不是 JSON'
           : '连接失败';
       tried.push({ via: c.via, err: why });
+      dbg('list', '清单来源失败', { via: c.via, err: why, detail: String(e && e.message ? e.message : e).slice(0, 120), url: c.url });
     }
   }
   await ext.storage.local.set({ [K.listFetched]: { at: Date.now(), via: '', added: 0, ok: false, tried } });
+  dbg('list', '清单全部失败', tried);
   return { ok: false, reason: 'all-failed', tried };
 }
 
@@ -292,11 +307,15 @@ async function fetchRemoteList() {
 async function maybeRefreshList(force) {
   const settings = await getSettings();
   const cfg = settings.remoteList || {};
-  if (!cfg.enabled || !cfg.url) return { ok: false, skipped: 'disabled' };
+  const url = String(cfg.url || MFL.DEFAULT_SETTINGS.remoteList.url).trim();
+  if (!cfg.enabled || !url) return { ok: false, skipped: 'disabled' };
 
   const o = await ext.storage.local.get(K.listFetched);
   const last = (o[K.listFetched] && o[K.listFetched].at) || 0;
-  if (!force && Date.now() - last < LIST_REFRESH_MS) return { ok: false, skipped: 'fresh' };
+  if (!force && Date.now() - last < LIST_REFRESH_MS) {
+    dbg('list', '周期巡检：清单仍是新的，跳过', { 距今小时: Math.round((Date.now() - last) / 3600000) });
+    return { ok: false, skipped: 'fresh' };
+  }
 
   return fetchRemoteList();
 }
@@ -399,13 +418,21 @@ function safeFileName(name) {
  * 下载目录由浏览器决定，扩展无法指定到别处——这是 downloads API 的硬边界。
  */
 async function writeTaskFile(task) {
-  if (!ext.downloads || !ext.downloads.download) return { ok: false, reason: 'no-downloads-api' };
+  if (!ext.downloads || !ext.downloads.download) {
+    DBG.log('task', '浏览器没有 downloads API');
+    return { ok: false, reason: 'no-downloads-api' };
+  }
 
   const name = safeFileName(task.name);
-  if (!name) return { ok: false, reason: 'bad-name' };
+  if (!name) { DBG.log('task', '文件名非法', task.name); return { ok: false, reason: 'bad-name' }; }
 
   let made;
   try { made = makeTaskUrl(task); } catch { return { ok: false, reason: 'encode-failed' }; }
+
+  dbg('task', '准备写任务文件', {
+    name, filename: TASK_FOLDER + '/' + name + '.task.json',
+    expected: task.expected || null, source: task.source || '', scheme: made.url.slice(0, 12),
+  });
 
   try {
     const id = await ext.downloads.download({
@@ -414,6 +441,7 @@ async function writeTaskFile(task) {
       conflictAction: 'overwrite',
       saveAs: false,
     });
+    DBG.log('task', '任务文件已写入', { id, path: TASK_FOLDER + '/' + name + '.task.json', scheme: made.url.slice(0, 12) });
     // 从下载列表移除记录（只清历史，不删文件），避免每次下载都留痕
     setTimeout(() => { try { ext.downloads.erase({ id }); } catch { } }, 2000);
     if (made.revoke) setTimeout(() => { try { URL.revokeObjectURL(made.url); } catch { } }, 3000);
@@ -421,26 +449,35 @@ async function writeTaskFile(task) {
     await ext.storage.local.set({ lastTask: { name, at: Date.now(), ok: true } });
     return { ok: true, id, name };
   } catch (e) {
-    return { ok: false, reason: String(e && e.message ? e.message : e) };
+    const why = String(e && e.message ? e.message : e);
+    DBG.log('task', '任务文件写入失败', why);
+    return { ok: false, reason: why };
   }
 }
 
 /** 点击下载时调用：记意图 → 尽力取期望哈希 → 写任务文件交给脚本校验 */
-async function createVerifyTask(url, name) {
+async function createVerifyTask(rawUrl, name) {
+  // 下载器/镜像页传来的可能是 https://<mirror>/https://github.com/... ，
+  // 先还原成官方直链，否则取期望哈希和回源锚点都会失败。
+  const url = MFL.normalizeGitHubUrl(String(rawUrl || ''));
   const settings = await getSettings();
+  DBG.log('intent', '创建任务', { url, restored: url !== rawUrl, name, hash: settings.hash });
   if (!settings.hash || !settings.hash.enabled || !settings.hash.auto) {
+    DBG.log('intent', '跳过：哈希校验未开启', settings.hash);
     return { ok: false, skipped: 'disabled' };
   }
 
   const finalName = name || AH.nameFromUrl(url);
-  if (!finalName) return { ok: false, reason: 'no-name' };
+  if (!finalName) { DBG.log('intent', '跳过：拿不到文件名'); return { ok: false, reason: 'no-name' }; }
 
   await recordIntent(url, finalName);
 
   let expected = null;
   let source = '';
   let meta = { repo: '', tag: '', assetId: 0, size: 0, sourceKind: '' };
-  if (await hasApiPermission()) {
+  const permitted = await hasApiPermission();
+  DBG.log('intent', 'api.github.com 权限', { permitted });
+  if (permitted) {
     try {
       const r = await GHH.resolveExpected(url, String(settings.token || '').trim(), MFL);
       expected = r.hash;
@@ -453,11 +490,17 @@ async function createVerifyTask(url, name) {
         assetId: r.assetId || 0,
         size: r.size || 0,
       };
+      DBG.log('intent', '取到期望哈希', {
+        hasHash: !!expected, sourceKind: meta.sourceKind, repo: meta.repo, tag: meta.tag,
+        assetId: meta.assetId, size: meta.size, source,
+      });
     } catch (e) {
       source = '未取得：' + String(e && e.message ? e.message : e).slice(0, 60);
+      DBG.log('intent', '取哈希失败', source);
     }
   } else {
     source = '未授权 api.github.com';
+    DBG.log('intent', '没有 api.github.com 权限，任务里不会有期望值');
   }
 
   return writeTaskFile(Object.assign({
@@ -531,7 +574,10 @@ const handlers = {
     const next = await setSettings(msg.patch || {});
     await syncAlarms();
     await applyRules();
-    if (next.remoteList && next.remoteList.enabled && next.remoteList.url) {
+    // 只在用户真的改了远程清单配置时顺带拉一次。以前只要改 token / 任意开关
+    // 都会触发网络请求，容易出现莫名其妙的「获取失败」。
+    if (msg.patch && msg.patch.remoteList && next.remoteList && next.remoteList.enabled) {
+      dbg('list', '远程清单配置变更，顺带拉一次');
       fetchRemoteList().catch(() => {});
     }
     return { settings: next };
@@ -627,6 +673,12 @@ const handlers = {
       clickToast: settings.clickToast,
       codeload: !!(settings.codeload && settings.codeload.enabled),
       hashAuto: !!(settings.hash && settings.hash.enabled && settings.hash.auto),
+      // 拆开给内容脚本记日志：只给一个 hashAuto:false 说不清到底缺哪一项
+      hash: {
+        enabled: !!(settings.hash && settings.hash.enabled),
+        auto: !!(settings.hash && settings.hash.auto),
+        hasToken: !!String(settings.token || '').trim(),
+      },
       best: best ? { name: best.name, host: MFL.hostOf(best.base) } : null,
     };
   },
@@ -649,8 +701,9 @@ const handlers = {
   // 手动补写一个任务文件（调试或补发用）
   'hash-task': async msg => {
     if (!msg || !msg.url) return { ok: false };
+    const url = MFL.normalizeGitHubUrl(String(msg.url));
     return writeTaskFile({
-      v: 2, name: msg.name || AH.nameFromUrl(msg.url), url: msg.url,
+      v: 2, name: msg.name || AH.nameFromUrl(url), url,
       expected: msg.expected || null, source: msg.source || '手动', ts: Date.now(),
       sourceKind: msg.sourceKind || 'manual',
       repo: msg.repo || '', tag: msg.tag || '', assetId: msg.assetId || 0, size: msg.size || 0,
@@ -670,18 +723,78 @@ const handlers = {
   },
 };
 
+// 轮询类消息每隔几秒就来一次，记进日志只会淹没真正的操作
+const QUIET_MSG = new Set(['get-state', 'hash-state', 'badge-info', 'maybe-probe', 'sync-alarms']);
+
+function briefResult(r) {
+  if (!r || typeof r !== 'object') return { value: r };
+  const out = {};
+  for (const k of ['ok', 'reason', 'error', 'skipped', 'count', 'added', 'probed', 'via', 'active', 'id']) {
+    if (r[k] !== undefined) out[k] = r[k];
+  }
+  if (r.rules && r.rules.count !== undefined) out.rules = r.rules.count;
+  if (r.tried) out.tried = r.tried.length;
+  return out;
+}
+
 ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  const fn = handlers[msg && msg.type];
+  const type = msg && msg.type;
+  const loud = !!type && !QUIET_MSG.has(type);
+  if (loud) dbg('msg', '后台收到 ' + type, {
+    from: sender && sender.tab ? 'tab:' + sender.tab.id : 'ext',
+    url: msg.url ? String(msg.url).slice(0, 120) : undefined,
+    patch: msg.patch || undefined,
+  });
+  const fn = handlers[type];
   if (!fn) return false;
   Promise.resolve(fn(msg, sender))
-    .then(r => sendResponse(r))
-    .catch(e => sendResponse({ ok: false, error: String(e && e.message ? e.message : e) }));
+    .then(r => {
+      if (loud) dbg('msg', '后台返回 ' + type, briefResult(r));
+      sendResponse(r);
+    })
+    .catch(e => {
+      const err = String(e && e.message ? e.message : e);
+      if (loud) dbg('msg', '后台异常 ' + type, err);
+      sendResponse({ ok: false, error: err });
+    });
   return true;   // 异步响应
 });
+
+/* ---------------------------- 下载事件（诊断） ----------------------------
+ * 关键：任务文件到底落在哪个目录，扩展自己说了不算，浏览器给的真实路径才算。
+ * 如果这里出现的是浏览器默认下载目录、而不是脚本实际扫描的目录，任务就会匹配不上。
+ */
+const DEBUG_ON = (typeof DBG !== 'undefined' && DBG.enabled);
+if (DEBUG_ON && ext.downloads && ext.downloads.onCreated) {
+  ext.downloads.onCreated.addListener(item => {
+    // DNR 重定向后下载项里可能已经是镜像 URL，这里顺手验证还原是否成功
+    const raw = String(item.url || '');
+    const gh = MFL.normalizeGitHubUrl(raw);
+    dbg('download', '浏览器发起下载', {
+      id: item.id,
+      url: raw.slice(0, 140),
+      restored: gh !== raw,
+      ghUrl: gh !== raw ? gh.slice(0, 140) : undefined,
+      filename: item.filename || '',
+      mime: item.mime || '',
+    });
+  });
+}
+if (DEBUG_ON && ext.downloads && ext.downloads.onChanged) {
+  ext.downloads.onChanged.addListener(delta => {
+    if (delta.filename) dbg('download', '下载落盘路径', { id: delta.id, filename: delta.filename.current });
+    if (delta.state) dbg('download', '下载状态 ' + delta.state.current, { id: delta.id });
+    if (delta.error) dbg('download', '下载失败 ' + delta.error.current, { id: delta.id });
+  });
+}
 
 /* --------------------------------- 生命周期 ------------------------------- */
 
 async function bootstrap() {
+  dbg('boot', '后台启动/唤醒', {
+    version: ext.runtime.getManifest().version,
+    debug: !!(ext.runtime.getManifest().debug),
+  });
   // 首次安装时把默认设置落盘，避免 storage 里没有 settings 键
   const raw = await ext.storage.local.get(K.settings);
   if (!raw[K.settings]) {

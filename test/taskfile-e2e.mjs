@@ -4,7 +4,7 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,7 +32,8 @@ const eq = (n, a, b) => ok(n, a === b, 'got=' + JSON.stringify(a) + ' want=' + J
 const profile = mkdtempSync(join(tmpdir(), 'mfl-task-'));
 // 隔离下载目录：扩展写任务文件会走 chrome.downloads，不受 CDP 的 setDownloadBehavior 影响，
 // 只能通过首启偏好把 default_directory 指过去——否则会往用户真实下载夹里丢 uuid.tmp。
-const BASES = ['C:/Users/YI/Downloads', 'E:/360Downloads'];
+// 下载目录按当前用户推导，可用 MFL_DOWNLOAD_DIR 覆盖；不写死个人路径
+const BASES = [process.env.MFL_DOWNLOAD_DIR, join(homedir(), 'Downloads')].filter(Boolean);
 const TMP_RE = /^[0-9a-f-]{36}\.tmp$/i;
 function snapshotTmp() {
   const set = new Set();
@@ -156,7 +157,7 @@ try {
   })()`);
   eq('返回 disabled', off.skipped, 'disabled');
   await sleep(1500);
-  ok('未生成任务文件', !findTaskFile('C:/Users/YI/Downloads'));
+  ok('未生成任务文件', !findTaskFile(BASES[0]));
 
   console.log('\n3. 开启后写入任务文件');
   const on = await evalIn(`(async () => {
@@ -169,7 +170,8 @@ try {
   ok('写入调用成功', on && on.ok === true, JSON.stringify(on));
 
   await sleep(3000);
-  taskPath = findTaskFile('C:/Users/YI/Downloads') || findTaskFile('E:/360Downloads');
+  taskPath = null;
+  for (const base of BASES) { taskPath = findTaskFile(base); if (taskPath) break; }
   ok('任务文件已落地', !!taskPath, taskPath || '未找到');
 
   if (taskPath) {

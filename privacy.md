@@ -1,6 +1,6 @@
 # 隐私政策 · 镜像快车道
 
-最后更新：2026-11-06
+最后更新：2026-11-07
 
 ## 一句话
 
@@ -41,7 +41,7 @@ Token 只发往 `api.github.com`，不会附加到任何镜像请求上。
 
 ```
 <浏览器下载目录>/_mfl-tasks/<文件名>.task.json
-内容：{"v":1,"name":"文件名","url":"原始 GitHub 地址","expected":"期望哈希","source":"来源","ts":时间}
+内容：{"v":2,"name":"文件名","url":"原始 GitHub 地址","expected":"期望哈希","source":"来源","ts":时间,"sourceKind":"api-digest","repo":"owner/repo","tag":"v1.0","assetId":123,"size":0}
 ```
 
 - **这不是下载你的文件**，只是扩展自己生成的一段配置，通过 `downloads` API 落盘（因此需要该权限）
@@ -73,7 +73,9 @@ Token 只发往 `api.github.com`，不会附加到任何镜像请求上。
 
 ## 关于可选脚本
 
-`hooks/hash-hook.ps1` 不属于扩展本体，需要用户自行下载并挂到下载器上。它只做三件事：读本地文件、计算 SHA-256、写一行文本。不联网、不上传、不执行下载内容。
+`hooks/hash-hook.ps1` 不属于扩展本体，需要用户自行下载并挂到下载器上。它读取本地文件、计算 SHA-256、把结果写进 `outbox.txt`，并**默认向 `api.github.com` 发一次只读 GET** 回源复核官方 digest（可用 `-NoNet` 完全关闭联网）。它不上传文件内容、不执行下载内容、不扫描任务目录之外的文件。
+
+回源凭据由用户选择：与脚本同目录的 `auth.txt`（可 DPAPI 加密，由 `set-hook-token.ps1` 生成）、`GITHUB_TOKEN` 环境变量，或匿名访问。凭据只出现在 `Authorization` 请求头里，不写日志、`outbox.txt` 或通知。匿名访问按出口 IP 限 60 次/小时，可能降级为 `pass-unverified`。
 
 使用者应自行审查该脚本；作者仅保证其在开发者本人设备上可用。
 

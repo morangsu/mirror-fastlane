@@ -12,7 +12,7 @@ const BIN = process.env.MFL_BIN || [
   'D:/scoop/apps/googlechrome/current/chrome.exe',
 ].find(p => p && existsSync(p));
 
-const EXT = 'C:/Users/YI/AppData/Local/Temp/mfl-exp2';
+const EXT = process.env.MFL_PROBE_EXT || join(tmpdir(), 'mfl-exp2');
 const PORT = 9501;
 const PROFILE = mkdtempSync(join(tmpdir(), 'mfl-fs2-'));
 const DLDIR = mkdtempSync(join(tmpdir(), 'mfl-fs2out-'));

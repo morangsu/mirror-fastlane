@@ -49,7 +49,9 @@ function runHook(dir, extra = '') {
  * 本机到 github.com / api.github.com 经常要过代理，Node 的 fetch 不读 http_proxy，
  * 所以统一走 curl：先吃环境代理，再显式试 Clash 默认端口。
  */
-const CURL_PROXIES = [[], ['-x', 'http://127.0.0.1:7897']];
+// 代理由本机环境变量提供，不把个人代理端口写进仓库
+const PROXY = process.env.MFL_PROXY || '';
+const CURL_PROXIES = PROXY ? [[], ['-x', PROXY]] : [[]];
 
 function curlJson(url) {
   for (const extra of CURL_PROXIES) {

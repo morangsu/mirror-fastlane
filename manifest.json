@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "default_locale": "en",
   "name": "__MSG_extName__",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "__MSG_extDescription__",
   "minimum_chrome_version": "121",
   "browser_specific_settings": {
@@ -39,6 +39,7 @@
       "lib/idb.js",
       "lib/gh-hash.js",
       "lib/auto-hash.js",
+      "lib/debug-log.js",
       "background.js"
     ]
   },
@@ -56,6 +57,8 @@
         "https://github.com/*"
       ],
       "js": [
+        "lib/core.js",
+        "lib/debug-log.js",
         "content/content.js"
       ],
       "css": [

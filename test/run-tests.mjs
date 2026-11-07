@@ -229,6 +229,29 @@ eq('latest 页面可识别',
 eq('含斜杠的 tag 也能还原',
   MFL.parseReleaseUrl('https://github.com/o/r/releases/download/release/1.0/a.zip').tag, 'release/1.0');
 
+/* -------------------- 8.1 镜像地址还原 -------------------- */
+group('8.1 镜像地址还原');
+const GH_DL = 'https://github.com/keepassxreboot/keepassxc/releases/download/2.8.0/KeePassXC-2.8.0-x64.msi';
+eq('官方直链原样返回', MFL.normalizeGitHubUrl(GH_DL), GH_DL);
+eq('DNR 形式：镜像前缀 + 完整原链', MFL.normalizeGitHubUrl('https://gh.monlor.com/' + GH_DL), GH_DL);
+eq('另一个镜像域名同样可还原', MFL.normalizeGitHubUrl('https://gh.dpik.top/' + GH_DL), GH_DL);
+eq('镜像路径不带 scheme', MFL.normalizeGitHubUrl(
+  'https://gh.monlor.com/github.com/keepassxreboot/keepassxc/releases/download/2.8.0/KeePassXC-2.8.0-x64.msi'), GH_DL);
+eq('?url= 编码形式', MFL.normalizeGitHubUrl('https://gh.monlor.com/?url=' + encodeURIComponent(GH_DL)), GH_DL);
+eq('?url= 明文形式', MFL.normalizeGitHubUrl('https://gh.monlor.com/?url=' + GH_DL), GH_DL);
+eq('codeload 镜像可还原', MFL.normalizeGitHubUrl(
+  'https://gh.monlor.com/https://codeload.github.com/o/r/zip/refs/tags/v1'),
+  'https://codeload.github.com/o/r/zip/refs/tags/v1');
+eq('普通第三方地址不动', MFL.normalizeGitHubUrl('https://example.com/a.zip'), 'https://example.com/a.zip');
+eq('仿冒域名不误判', MFL.normalizeGitHubUrl(
+  'https://github.com.evil.com/o/r/releases/download/v1/a.zip'),
+  'https://github.com.evil.com/o/r/releases/download/v1/a.zip');
+eq('空值', MFL.normalizeGitHubUrl(''), '');
+// 还原之后，取 tag / 取文件名 / 查官方 digest 的整套逻辑必须照常工作
+eq('镜像地址能解析出 tag', MFL.parseReleaseUrl('https://gh.monlor.com/' + GH_DL).tag, '2.8.0');
+eq('镜像地址能解析出 repo', MFL.parseReleaseUrl('https://gh.monlor.com/' + GH_DL).repo, 'keepassxc');
+eq('镜像地址能取到文件名', MFL.fileNameFromUrl('https://gh.monlor.com/' + GH_DL), 'KeePassXC-2.8.0-x64.msi');
+
 /* ----------------------- 8.5 期望哈希的资产定位 ----------------------- */
 
 group('8.5 资产定位');
@@ -267,6 +290,14 @@ try {
   ok('查的是 /releases/tags/v1.0.0 而不是最新版',
     calls.some(u => u.includes('/releases/tags/v1.0.0')) && !calls.some(u => u.includes('per_page')),
     calls.join(' | '));
+
+  // 用户从 IDM / 下载项复制来的往往是 DNR 重定向后的镜像地址，
+  // 整条「取官方 digest」链路也必须能吃下这种输入
+  const r1m = await GHH.resolveExpected(
+    'https://gh.monlor.com/https://github.com/o/r/releases/download/v1.0.0/foo-1.0.0.zip', '', MFL);
+  eq('镜像地址也能取到官方 digest', r1m.hash, H);
+  eq('镜像地址也能带回 tag 锚点', r1m.tag, 'v1.0.0');
+  eq('镜像地址也能带回资产 id', r1m.assetId, 101);
 
   const r2 = await GHH.resolveExpected('https://github.com/o/r/releases/tag/v2.0.0', '', MFL);
   eq('单个资产的页面可以定位', r2.hash, 'c'.repeat(64));
@@ -346,7 +377,7 @@ function walk(dir, out = []) {
   }
   return out;
 }
-const files = walk(ROOT).filter(f => /\.(js|html|json|mjs)$/.test(f));
+const files = walk(ROOT).filter(f => /\.(js|html|json|mjs|ps1|cmd)$/.test(f));
 
 const bad = [];
 for (const f of files) {
@@ -367,6 +398,35 @@ ok('设置页会为哈希功能申请 api.github.com 权限',
 ok('manifest 未申请 tabs / webRequest 等宽权限',
   !JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8')).permissions
     .some(p => ['tabs', 'webRequest', 'history', 'cookies'].includes(p)));
+
+/* ------------------------------ 10b. 发布防呆 ------------------------------ */
+
+group('10b. 发布防呆');
+const ignoreLines = readFileSync(join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/).map(l => l.trim());
+for (const pat of ['auth.txt', 'outbox.txt', '_mfl-tasks/', '*.task.json', '.env']) {
+  ok('.gitignore 忽略 ' + pat, ignoreLines.includes(pat));
+}
+const pkgVer = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+eq('package.json 与 manifest 同版本', pkgVer, mf.version);
+ok('SOURCE.md 写明当前版本',
+  readFileSync(join(ROOT, 'SOURCE.md'), 'utf8').includes('`' + pkgVer + '`'), pkgVer);
+ok('README 打包命令使用当前版本',
+  readFileSync(join(ROOT, 'README.md'), 'utf8').includes(pkgVer + '.zip'));
+
+const edgeDbg = join(ROOT, 'dist', 'edge', 'lib', 'debug-log.js');
+if (existsSync(edgeDbg)) {
+  const e = readFileSync(edgeDbg, 'utf8');
+  const f = readFileSync(join(ROOT, 'dist', 'firefox', 'lib', 'debug-log.js'), 'utf8');
+  const d = readFileSync(join(ROOT, 'dist', 'debug', 'lib', 'debug-log.js'), 'utf8');
+  ok('正式包调试模块是 no-op stub', /Production build stub/.test(e) && /Production build stub/.test(f));
+  ok('正式包不含调试面板',
+    !/MFL_DEBUG_PANEL_START/.test(readFileSync(join(ROOT, 'dist', 'edge', 'options', 'options.html'), 'utf8')));
+  ok('debug 目标保留完整实现', /SECRET_VAL/.test(d) && !/Production build stub/.test(d));
+  eq('dist/edge manifest 版本',
+    JSON.parse(readFileSync(join(ROOT, 'dist', 'edge', 'manifest.json'), 'utf8')).version, pkgVer);
+} else {
+  ok('dist 已构建（先跑 npm run build）', false, '缺少 dist/edge/lib/debug-log.js');
+}
 
 /* ------------------------------ 11. 打包产物 ------------------------------ */
 

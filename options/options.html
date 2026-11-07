@@ -190,6 +190,13 @@
   <h2>哈希校验</h2>
   <div class="card">
     <div class="row">
+      <div class="k"><b>自动校验状态</b><small id="hashStatusHint">正在检查…</small></div>
+      <span>
+        <span id="hashStatusTag" class="tag">—</span>
+        <button id="enableAutoHash" class="primary" style="margin-left:8px" title="一次性打开两个开关、申请 api.github.com 授权，并保存已填的 Token。重新加载调试扩展后设置会重置，点这里可快速恢复。">一键开启</button>
+      </span>
+    </div>
+    <div class="row">
       <div class="k"><b>启用哈希校验</b><small>默认关闭。开启时会请求 <code>api.github.com</code> 的只读权限，用于取得期望哈希</small></div>
       <input type="checkbox" id="hashEnabled">
     </div>
@@ -199,7 +206,7 @@
     </div>
     <div class="row">
       <div class="k"><b>GitHub Token（可选）</b><small>只用于提高 API 限额（60/小时 → 5000/小时），只发给 api.github.com</small></div>
-      <input type="password" id="token" placeholder="github_pat_..." style="max-width:420px">
+      <input type="password" id="token" placeholder="粘贴只读 PAT（可选）" style="max-width:420px">
     </div>
     <div class="row">
       <div class="k"><small id="hashAutoHint">任务文件落在浏览器自己的下载目录，脚本会自动找到它</small></div>
@@ -221,9 +228,32 @@
       <button id="reapply">重建规则</button>
     </div>
   </div>
+
+  <!-- MFL_DEBUG_PANEL_START -->
+  <div id="debugBox" style="display:none">
+    <h2>调试日志 <span class="tag warn">debug 构建</span></h2>
+    <div class="card">
+      <div class="row">
+        <div class="k"><b>事件记录</b><small>点过的按钮、点击的下载链接、任务文件写入结果都在这里；最多保留 400 条</small></div>
+        <span>
+          <button id="dbgExport" class="primary">导出 .txt</button>
+          <button id="dbgCopy">复制</button>
+          <button id="dbgReload">刷新</button>
+          <button id="dbgClear">清空</button>
+        </span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div class="k"><b>分步自检</b><small>不经过点击，直接让后台写一个任务文件；用来区分「点击没上报」和「下载目录不对」</small></div>
+        <button id="dbgTestTask">测试写任务文件</button>
+      </div>
+      <pre id="dbgLog" style="max-height:320px;overflow:auto;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-all;margin:8px 0 0;padding:8px;border-radius:6px;background:rgba(127,127,127,.12)">（暂无）</pre>
+    </div>
+  </div>
+  <!-- MFL_DEBUG_PANEL_END -->
 </div>
 <div class="toast" id="toast"></div>
 <script src="../lib/core.js"></script>
+<script src="../lib/debug-log.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

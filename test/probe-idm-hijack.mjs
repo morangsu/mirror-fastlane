@@ -8,8 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const BIN = process.env.MFL_BIN || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
-const PROBE_EXT = 'C:/Users/YI/AppData/Local/Temp/mfl-exp2';
-const IDM_EXT = 'C:/Users/YI/AppData/Local/Microsoft/Edge/User Data/Default/Extensions/llbjbkhnmlidjebalopleeepgdfgcpec/6.43.1_0';
+// 本机相关路径一律由环境变量提供；未设置时退化成「纯对照」模式，不读任何个人目录
+const PROBE_EXT = process.env.MFL_PROBE_EXT || join(tmpdir(), 'mfl-exp2');
+const IDM_EXT = process.env.MFL_IDM_EXT || '';
 const LOAD_IDM = process.argv.includes('--with-idm') && existsSync(IDM_EXT);
 
 const PORT = 9503;
@@ -86,8 +87,8 @@ try {
   const { targetInfos } = await browser.call('Target.getTargets');
 
   // MV2 扩展的后台是常驻页面（background_page），不是 service_worker，必须按扩展 ID 判断
-  const IDM_ID = 'llbjbkhnmlidjebalopleeepgdfgcpec';
-  const idmTargets = targetInfos.filter(t => (t.url || '').includes(IDM_ID));
+  const IDM_ID = process.env.MFL_IDM_ID || '';
+  const idmTargets = IDM_ID ? targetInfos.filter(t => (t.url || '').includes(IDM_ID)) : [];
   const sws = targetInfos.filter(x => x.type === 'service_worker' && x.url.startsWith('chrome-extension://'));
 
   console.log('加载 IDM 扩展:', LOAD_IDM ? '是' : '否（纯对照）');

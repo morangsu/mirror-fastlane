@@ -1,4 +1,9 @@
-/* 构建：生成 dist/edge 与 dist/firefox，并按目标裁剪 manifest 差异键
+/* 构建：生成 dist/edge、dist/firefox 与 dist/debug，并按目标裁剪 manifest 差异键
+ *
+ * 正式目标（edge / firefox）会把 lib/debug-log.js 换成 no-op stub，
+ * 并移除 options.html 里的调试面板；只有 dist/debug 保留完整调试实现。
+ * 这样商店包里不含任何日志采集/导出代码，而 HTML、manifest 与 importScripts
+ * 仍引用同一个文件名，不会出现 404。
  * 也可被 tools/ 下的脚本 import，复用图标绘制（此时不执行构建）
  */
 import { readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -12,6 +17,26 @@ const IS_MAIN = process.argv[1] && fileURLToPath(import.meta.url) === process.ar
 
 const COPY_DIRS = ['lib', 'content', 'options', 'popup', 'verify', 'data', 'icons', '_locales'];
 const COPY_FILES = ['background.js'];
+
+// 正式包里的调试模块替身：接口与 lib/debug-log.js 完全一致，但所有方法都是空操作。
+// 保留同名文件是为了让三份 HTML、manifest 与 background.js 的 importScripts 引用依旧有效。
+const DEBUG_STUB = `/* Production build stub: debug logging is not shipped in store packages.
+ * The full implementation is only used by dist/debug (manifest debug:true).
+ */
+(function (root) {
+  'use strict';
+  var noop = function () {};
+  root.DBG = {
+    enabled: false,
+    log: noop,
+    dump: function () { return Promise.resolve([]); },
+    clear: function () { return Promise.resolve(); },
+    prune: function () { return Promise.resolve(); },
+    text: function () { return Promise.resolve(''); },
+    formatLine: function () { return ''; }
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+`;
 
 /* ------------------------------- PNG 图标 ------------------------------- */
 
@@ -120,7 +145,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-function buildTarget(name, transformManifest) {
+function buildTarget(name, transformManifest, opts = {}) {
   const out = join(DIST, name);
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
@@ -130,6 +155,17 @@ function buildTarget(name, transformManifest) {
     if (existsSync(src)) cpSync(src, join(out, d), { recursive: true });
   }
   for (const f of COPY_FILES) cpSync(join(ROOT, f), join(out, f));
+
+  if (opts.production) {
+    // 1) 用 no-op stub 覆盖调试模块；2) 从设置页剥掉只有 debug 构建才会显示的面板
+    writeFileSync(join(out, 'lib', 'debug-log.js'), DEBUG_STUB, 'utf8');
+    const optHtml = join(out, 'options', 'options.html');
+    const html = readFileSync(optHtml, 'utf8');
+    const stripped = html.replace(
+      /<!-- MFL_DEBUG_PANEL_START -->[\s\S]*?<!-- MFL_DEBUG_PANEL_END -->\r?\n?/g, '');
+    if (stripped === html) throw new Error(name + ': 未找到调试面板标记，拒绝构建正式包');
+    writeFileSync(optHtml, stripped, 'utf8');
+  }
 
   const mf = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
   transformManifest(mf);
@@ -153,16 +189,26 @@ function buildAll() {
     delete mf.browser_specific_settings;
     // Chrome 在 MV3 下不接受 background.scripts，必须只留 service_worker
     mf.background = { service_worker: mf.background.service_worker };
-  });
+  }, { production: true });
 
   const firefox = buildTarget('firefox', mf => {
     delete mf.minimum_chrome_version;
     // Firefox 不支持 background.service_worker
     mf.background = { scripts: mf.background.scripts };
+  }, { production: true });
+
+  // 调试构建：与 edge 相同，但带 debug:true（打开日志面板）并改成一眼能认出的名字。
+  // 只在本机排查用，不进商店、不进 release。
+  const dbg = buildTarget('debug', mf => {
+    delete mf.browser_specific_settings;
+    mf.background = { service_worker: mf.background.service_worker };
+    mf.debug = true;
+    mf.name = '镜像快车道 (debug)';
   });
 
   console.log(`[edge]    ${edge.out}  ${edge.count} 个文件`);
   console.log(`[firefox] ${firefox.out}  ${firefox.count} 个文件`);
+  console.log(`[debug]   ${dbg.out}  ${dbg.count} 个文件  （带调试日志，仅本机排查用）`);
 }
 
 export { makeIcon, encodePNG };
