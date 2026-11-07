@@ -8,7 +8,7 @@
 Mirror Fastlane
 ```
 
-## Short description (132 chars)
+## Short description (limit: 132 chars)
 
 ```
 Rewrite GitHub release downloads to a working mirror, with the source labelled on the page. On-demand probing only, no telemetry.

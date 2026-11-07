@@ -30,6 +30,8 @@ node build.mjs          # 产出 dist/edge、dist/firefox、dist/debug（debug �
 - Firefox：`about:debugging` → 「此 Firefox」→「临时载入附加组件」→ 选 `dist/firefox/manifest.json`
 
 > Chrome 156 起不再支持 `--load-extension` 命令行开关，命令行加载请用 Edge 或 Chrome for Testing。
+>
+> 根目录的 `manifest.json` 是构建模板（同时声明 `service_worker` 与 `scripts`），**不要直接把仓库根目录当成「加载解压缩的扩展」**；请始终选 `dist/edge` 或 `dist/firefox`。
 
 ## 权限说明
 

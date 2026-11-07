@@ -10,7 +10,7 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 |---|---|
 | Edge 上架包 | `packages\mirror-fastlane-edge-1.4.5.zip`（56,303 B，SHA-256 `b8883b0e…`） |
 | Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.5.zip`（56,425 B，SHA-256 `68bd942b…`） |
-| AMO 源码包 | `packages\mirror-fastlane-source-1.4.5.zip`（159,899 B，SHA-256 `57302969…`） |
+| AMO 源码包 | `packages\mirror-fastlane-source-1.4.5.zip`（159,989 B，SHA-256 `e8eb62d1…`） |
 
 完整哈希、体积、文件数与打包时的 commit 见 `packages\build-info.json`（由 `npm run pack` 生成）。
 | 商店 Logo 300×300 | `logo-300.png` |
@@ -101,3 +101,4 @@ Firefox 的扩展 ID 已定稿为 `mirror-fastlane@morangsu.github.io`，提交�
 - [ ] zip 里没有 `store/`、`test/`、`hooks/` 等无关目录
 - [ ] `store/packages/build-info.json` 里的 SHA-256 与下表一致，commit 与 `v1.4.5` tag 对应
 - [ ] 源码包不含 `dist/`、一次性探测脚本与商店内部话术
+- [ ] 上架包来自 `dist/edge` 或 `dist/firefox`，不是 `dist/debug`（后者 manifest 带 `debug:true`，仅本机排查用）
