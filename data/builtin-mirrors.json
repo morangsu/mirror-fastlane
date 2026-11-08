@@ -69,18 +69,23 @@
       "auto": true
     },
     {
+      "name": "gitproxy.click",
+      "base": "https://gitproxy.click",
+      "auto": true
+    },
+    {
       "name": "fastgit.cc",
       "base": "https://fastgit.cc",
       "auto": true
     },
     {
-      "name": "blfrp.cn",
-      "base": "https://g.blfrp.cn",
+      "name": "monkeyray.net",
+      "base": "https://ghproxy.monkeyray.net",
       "auto": true
     },
     {
-      "name": "monkeyray.net",
-      "base": "https://ghproxy.monkeyray.net",
+      "name": "geekertao.top",
+      "base": "https://ghfile.geekertao.top",
       "auto": true
     }
   ]
