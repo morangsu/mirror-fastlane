@@ -26,7 +26,7 @@ const lines = text.split(/\r?\n/);
 let changed = 0;
 
 for (const p of info.packages) {
-  const bytes = Number(p.bytes).toLocaleString('en-US') + ' B';
+  const bytes = Number(p.bytes).toLocaleString('en-US');   // 不含单位，拼进正则替换串时只加一次
   const sha8 = String(p.sha256).slice(0, 8);
   const idx = lines.findIndex(l => l.includes(p.file) && l.includes('SHA-256'));
   if (idx < 0) {
@@ -43,12 +43,12 @@ for (const p of info.packages) {
   const after = before.replace(RE, bytes + ' B，SHA-256 `' + sha8 + '…`');
   // 值已经一致是正常情况（重复跑 pack/sync），不是错误
   if (after === before) {
-    console.log('  ' + p.file + ' 已是最新（' + bytes + ' ' + sha8 + '…）');
+    console.log('  ' + p.file + ' 已是最新（' + bytes + ' B ' + sha8 + '…）');
   } else {
     lines[idx] = after;
     changed++;
+    console.log('  ' + p.file + ' → ' + bytes + ' B  ' + sha8 + '…');
   }
-  console.log('  ' + p.file + ' → ' + bytes + '  ' + sha8 + '…');
 }
 
 writeFileSync(readmePath, lines.join(eol), 'utf8');
