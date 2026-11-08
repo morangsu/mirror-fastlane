@@ -10,7 +10,7 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 |---|---|
 | Edge 上架包 | `packages\mirror-fastlane-edge-1.4.9.zip`（79,177 B，SHA-256 `51a87803…`） |
 | Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.9.zip`（79,299 B，SHA-256 `9c53eb4f…`） |
-| AMO 源码包 | `packages\mirror-fastlane-source-1.4.9.zip`（215,414 B，SHA-256 `943e2998…`） |
+| AMO 源码包 | `packages\mirror-fastlane-source-1.4.9.zip`（215,611 B，SHA-256 `7dec68ea…`） |
 
 完整哈希、体积、文件数与打包时的 commit 见 `packages\build-info.json`（由 `npm run pack` 生成）。
 | 商店 Logo 300×300 | `logo-300.png` |
