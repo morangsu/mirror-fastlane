@@ -71,5 +71,25 @@ $('probeNow').addEventListener('click', async () => {
   refresh();
 });
 
+// 下载失败时手动把当前镜像降权，chooseMirrors 会立刻选下一个健康的
+$('switchMirror').addEventListener('click', async () => {
+  const btn = $('switchMirror');
+  btn.disabled = true;
+  try {
+    const r = await ext.runtime.sendMessage({ type: 'switch-mirror' });
+    if (r && r.ok) {
+      $('hint').textContent = '已从 ' + r.from + ' 换到 ' + (r.to || '主站');
+    } else {
+      $('hint').textContent = r && r.reason === 'no-alternative'
+        ? '只剩一个可用镜像，没有可换的'
+        : '没有可切换的镜像';
+    }
+  } catch (e) {
+    $('hint').textContent = '切换失败：' + String(e && e.message ? e.message : e);
+  }
+  btn.disabled = false;
+  refresh();
+});
+
 dbg('ui', '弹窗已打开');
 refresh();

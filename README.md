@@ -41,7 +41,9 @@ node build.mjs          # 产出 dist/edge、dist/firefox、dist/debug（debug �
 | `alarms` | 定时探测（仅在开启「定时」模式时使用） |
 | `declarativeNetRequest` | 改写下载地址 |
 | `host_permissions: github.com / codeload.github.com` | 改写目标与发起方 |
+| `downloads` | 写校验任务文件；监听下载中断，用于镜像降权 |
 | `optional_host_permissions` | 每个镜像域名单独申请，安装时不索取 |
+| `optional_permissions: webRequest` | 默认不申请；开启 raw 时在用户手势里申请，只观察 raw 请求的 URL 与状态码，不阻断、不读内容 |
 
 镜像域名用「可选权限」而非全量权限：安装时不弹授权，添加或批量授权时才请求，且只针对具体域名。
 
@@ -75,6 +77,16 @@ node build.mjs          # 产出 dist/edge、dist/firefox、dist/debug（debug �
 - **手动添加的镜像**：永不自动删除；
 - **抓取失败 / 清单格式不认识 / 清单为空**：这一轮不做缺失判定，一个镜像都不会删（只有在拿到一份非空且能识别的清单时才会累计缺失时间）。
 
+### 授权（只影响测速，不影响跳转）
+
+跳转本身不需要**可选 host 权限**（Firefox 实测：一个镜像域名都没授权时 release 的改写照样生效），**不授权也能正常用**，只是没法测速排序。
+但浏览器层面的「站点访问 / 全部网址」总开关若被关掉，扩展对任何站点的请求都会被隔离，改写也不会发生——那是浏览器设置，不是本扩展的权限。设置页有两个批量授权按钮：
+
+- **一键授权内置镜像**——只覆盖内置的那几个；
+- **授权远程镜像**——只授权**此刻已经在列表里**的远程镜像（来源列显示「远程」）。之后清单自动新增的**不会**跟着被授权，因为浏览器只允许在用户点击的当下申请权限；想授权新来的，再点一次即可。
+
+授权后一律以浏览器的 `permissions.contains` 为准回填状态，不会再出现「显示已授权但测不了」。
+
 ### 规则怎么生成
 
 DNR 里**一个请求只会命中一条规则**，规则之间不存在"这个失败了再试下一个"的链式回退。
@@ -84,12 +96,43 @@ DNR 里**一个请求只会命中一条规则**，规则之间不存在"这个�
 |---|---|---|
 | 直链 `releases/download/…` | 得分最高的健康镜像 | 总是 |
 | 源码包 `codeload.github.com/…` | 分流开启时换**第二个**健康镜像；关掉则同直链 | 设置里勾选「源码包」 |
+| raw 单文件 `raw.githubusercontent.com/…` | 按 **raw 自身**的延迟排序，取前 5 个健康镜像，按 owner 首字符分 5 组各走一个 | **默认关**：设置页勾选一次，浏览器会弹权限确认 |
+
+**为什么 raw 要单独一套**：大文件的吞吐排名和小文件的延迟排名不是一回事，混在一起会让某一类变慢；
+分成 5 片则是为了避免所有 raw 请求挤在同一个镜像上被限流——代价是某一片挂了，只有约 1/5 的 raw 地址会失败。
+
+**raw 规则只作用于 `main_frame`**（直接打开链接 / 下载），不动 `xmlhttprequest` 与 `image`：
+镜像返回的 CORS 头与 GitHub 不同，改页面里的 fetch 会把原本能用的请求弄坏；图片则会让一个页面产生几十个
+小请求打镜像，既容易触发限流又可能更慢。
+
+**raw 需要一次可选授权**：Chromium 只对「扩展拥有 host 权限的请求 URL」应用 redirect。
+`raw.githubusercontent.com` 属于 `optional_host_permissions`，所以勾选开关时浏览器会弹一次确认；
+没拿到授权时扩展**不生成** raw 规则，避免注册一堆永不生效的规则。拒绝授权不影响 release/源码包。
+
+同一手势里还会一并申请**当前 raw 分片用到的镜像域名**与可选的 `webRequest` 观察权限：
+实测只给 raw host 权限时，被改写到镜像的请求只有「发起」、看不到「结果」，失败率就算不出来。
+分片变化后可用设置页的「补授权 raw 分片」补一次；
+`webRequest` 是可选项，某些浏览器不支持运行时申请时，raw 加速照常工作，只是没有失败率统计。
 
 「直链与源码包分走不同镜像」默认开启：两类流量来自不同源站、体量也差一个量级，分开跑避免互相挤占，
 也避开单个镜像的限流。只有一个可用镜像时自动退化成同一个。
 
-代价要说清楚：**分流不等于故障转移**。某个镜像在两次探测之间挂掉，已生成的规则仍指向它，
-要等健康度翻转（连续 3 次探测失败）才会重建规则。想立刻切换，去设置页点「立即测速全部」。
+代价要说清楚：**分流不等于故障转移**。某个镜像在两次探测之间挂掉，已生成的规则仍指向它。
+现在有三条自愈路径：真实下载中断会自动给它降权并重建规则、raw 失败率超阈值会立刻重测分片、
+也可以点弹窗「换镜像」或设置页「立即测速全部」手动切换。
+
+### 失败自愈、探测预算与可观测性
+
+- **真实下载失败**：`downloads.onChanged` 里的 `interrupted`（排除用户取消、关机、浏览器崩溃）会给对应镜像记一次故障并重建规则，自动换到下一个健康镜像；同一镜像 10 分钟内只记一次，避免失败风暴。
+- **raw 请求失败率**：开启 raw 后统计最近 30 分钟**真实 raw 请求**的成败（只看 URL 与状态码，不读内容、不阻断）。404/410 是「文件真的不存在」，不计成败；429/5xx 才算镜像故障。失败占比达到阈值（默认 30%，至少 5 个样本）会**立刻重测 raw 分片并重排 top 5**，随后进入冷却（默认 5 分钟）。样本只存本机 storage，不上传。
+  - 观测不到结果的请求（多为分片域名还没授权）记为「无法观测」，**不计入分母**，避免把「看不见」误判成「失败」；设置页能看到这个数字并一键补授权。
+- **探测预算**：单次探测 256 KB → 64 KB；按时 / 按需探测跳过 `probeCacheHours`（默认 2 小时）内已测过且健康的镜像，按「最久没测」轮转、每轮最多 6 个，并发从 3 提到 6（17 条全量的轮数 6 → 3，慢镜像不再逐个排队）。手动「立即测速全部」仍测全部。
+- **判定修正**：200 的 HTML 错误页、只读到几百字节都不再算健康；超时但已读够 8 KB 算「部分成功」（速度偏低自然降权），不再一律判死。
+- **规则失败可见**：`updateDynamicRules` 抛错时徽章变 `!`、设置页显示红字，不再停在上一次的「生效中」。
+- **少唤醒**：没开「生效时段」时不创建 5 分钟 tick；SW 每次唤醒用规则指纹比对，规则没变就不做 DNR 全删全加。
+- **并发写入**：镜像表的所有读-改-写排队；探测跑几十秒后按**最新**列表合并探测字段，用户在这期间的停用 / 删除不会被静默回滚（真浏览器回归测试里守着这条）。
+- **看得见的数据**：清单里的 `note`（如「IDM 建议 4 连接」）与 `seedKbps` 现在会显示在镜像列表；「诊断」区可导出一份脱敏 JSON 快照（Token 打码），正式包也能自查。
+- **双语**：设置页的状态、按钮、表头与关键提示走 `_locales`（中 / 英），正文说明保持中文；远程清单**默认仍关闭**——内置镜像开箱可用。
 
 ## 哈希校验（可选）
 
@@ -388,18 +431,20 @@ npm run check:idm
 
 ```bash
 npm test                       # 全套（build + 以下 7 组）
-node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（218 项）
+node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（271 项）
 node test/debug-log-test.mjs   # 调试日志并发写入与脱敏（4 项）
 node test/content-state-test.mjs # 内容脚本状态刷新（7 项）
 node test/refresh-mirrors-test.mjs # 清单刷新脚本：精选保留 / 整段覆盖 / 空源拒绝（30 项）
-node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（27 项）
-node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（8 项）
+node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（34 项）
+node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（10 项）
 node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（18 项）
 node test/run-ps-tests.mjs     # 脚本逻辑（79 项断言，自动找 pwsh / powershell）
 npx --yes web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 ```
 
-单元测试 218 项、脚本测试 79 项，其余 94 项（debug 日志 4 + 内容脚本 7 + 清单刷新 30 + 冒烟 27 + 改写 8 + 任务文件 18），合计 **391 项**。
+node test/verify-release-test.mjs # 发版体检自身的回归（8 项，纯临时目录）
+
+单元测试 271 项、脚本测试 79 项，其余 112 项（debug 日志 4 + 内容脚本 7 + 清单刷新 30 + 冒烟 35 + 改写 10 + 任务文件 18 + 发版体检 8），合计 **462 项**。
 
 `test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完全部用例：
 
@@ -412,6 +457,13 @@ npx --yes web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检�
 
 `test/probe-*.mjs` 是针对浏览器能力的一次性探测脚本（下载协议兼容性、IDM 是否劫持、扩展能否写文件），
 会往真实下载目录写测试文件，不属于常规测试，请勿在无关环境运行。
+
+## 维护与自动化
+
+- `npm run sync:store-readme`：打包后从 `build-info.json` 自动把三个包的体积与 SHA-256 写进 `store/README.md`，不用再手抄。
+- `npm run check:release`（`tools/verify-release.mjs`）：发版前一键体检——版本一致性、三个 zip 的完整性与 SHA-256、`store/README.md` 哈希、源码包不含 `dist/docs/store/archive`、正式包调试日志为 stub。
+- `npm run check:mirrors`（`tools/validate-mirrors.mjs`）：清单 schema 门禁；`update-mirrors.yml` 在 bot 提交前也会跑，坏清单进不了 main。
+- `.github/workflows/test.yml`：push / PR 跑纯 Node 测试（构建、逻辑单测、schema、发版体检回归）。真浏览器与 PowerShell 测试仍在本机跑，CI 上跑不了。
 
 ## 提交到商店
 
@@ -429,8 +481,8 @@ npm run store       # build + logo + 截图 + 打包，一步生成 store/packag
 npm run pack        # 只重新打包（不重拍截图）
 
 # 也可手工打包（不依赖脚本自带的 zip 实现）：
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.6.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.6.zip -Force
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.9.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.9.zip -Force
 ```
 
 `hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，

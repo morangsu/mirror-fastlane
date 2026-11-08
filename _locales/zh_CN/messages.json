@@ -10,5 +10,185 @@
   "extActionTitle": {
     "message": "镜像快车道",
     "description": "工具栏按钮的悬停提示。"
+  },
+  "optTitle": {
+    "message": "镜像快车道"
+  },
+  "optSubtitle": {
+    "message": "把开源项目的下载链接切换到可用镜像。所有配置只保存在本机浏览器。"
+  },
+  "secMirrors": {
+    "message": "镜像列表"
+  },
+  "secAdd": {
+    "message": "添加镜像"
+  },
+  "secRewrite": {
+    "message": "改写行为"
+  },
+  "secProbe": {
+    "message": "探测策略"
+  },
+  "secRemote": {
+    "message": "远程清单"
+  },
+  "secHash": {
+    "message": "哈希校验"
+  },
+  "secDiag": {
+    "message": "诊断"
+  },
+  "secRawStats": {
+    "message": "raw 请求统计"
+  },
+  "masterSwitch": {
+    "message": "总开关"
+  },
+  "ruleStatus": {
+    "message": "规则状态"
+  },
+  "batchGrant": {
+    "message": "批量授权"
+  },
+  "grantRemoteLabel": {
+    "message": "授权远程镜像"
+  },
+  "colEnabled": {
+    "message": "启用"
+  },
+  "colName": {
+    "message": "名称 / 地址"
+  },
+  "colSource": {
+    "message": "来源"
+  },
+  "colStatus": {
+    "message": "状态"
+  },
+  "colSpeed": {
+    "message": "速度"
+  },
+  "colLatency": {
+    "message": "延迟"
+  },
+  "colActions": {
+    "message": "操作"
+  },
+  "stDisabled": {
+    "message": "已停用"
+  },
+  "stNeedPerm": {
+    "message": "需授权"
+  },
+  "stUnavailable": {
+    "message": "不可用"
+  },
+  "stUnmeasured": {
+    "message": "未测速"
+  },
+  "stAvailable": {
+    "message": "可用"
+  },
+  "srcBuiltin": {
+    "message": "内置"
+  },
+  "srcRemote": {
+    "message": "远程"
+  },
+  "srcManual": {
+    "message": "手动"
+  },
+  "btnGrant": {
+    "message": "授权"
+  },
+  "btnProbe": {
+    "message": "测速"
+  },
+  "btnRemove": {
+    "message": "删除"
+  },
+  "btnGrantBuiltin": {
+    "message": "一键授权内置镜像"
+  },
+  "btnGrantRemote": {
+    "message": "授权远程镜像"
+  },
+  "btnAdd": {
+    "message": "添加并授权"
+  },
+  "btnProbeNow": {
+    "message": "立即测速全部"
+  },
+  "btnFetchList": {
+    "message": "立即获取"
+  },
+  "btnReapply": {
+    "message": "重建规则"
+  },
+  "btnOpenVerify": {
+    "message": "打开校验页"
+  },
+  "btnRawReprobe": {
+    "message": "立即重测 raw"
+  },
+  "btnDiagnostic": {
+    "message": "导出诊断快照"
+  },
+  "btnRawShards": {
+    "message": "补授权 raw 分片"
+  },
+  "btnResetSamples": {
+    "message": "清空样本"
+  },
+  "tagOutOfWindow": {
+    "message": "时段外"
+  },
+  "tagActive": {
+    "message": "生效中"
+  },
+  "tagNoMirror": {
+    "message": "无可用"
+  },
+  "hashReady": {
+    "message": "已就绪"
+  },
+  "hashNotReady": {
+    "message": "未就绪"
+  },
+  "lbRawThreshold": {
+    "message": "失败率阈值（%）"
+  },
+  "lbRawMinSamples": {
+    "message": "最少样本数"
+  },
+  "lbRawCooldown": {
+    "message": "重测冷却（分钟）"
+  },
+  "lbDlFailures": {
+    "message": "下载失败"
+  },
+  "hintGrant": {
+    "message": "状态为「需授权」时，点「授权」后浏览器会弹一次确认——这是浏览器要求的最小权限授予，只针对该镜像域名。"
+  },
+  "hintRemote": {
+    "message": "默认关闭：内置镜像开箱可用，不必启用远程清单。若一个镜像域名都没授权，清单可能取不到（此时会走直连或 GitHub 页面直链兜底）。"
+  },
+  "hintRaw": {
+    "message": "默认关闭。开启会申请 raw.githubusercontent.com 与当前 raw 分片域名的访问权限，用于统计真实 raw 请求的成败；只改「直接打开/下载」，不改页面里的 fetch 与图片。"
+  },
+  "phNewName": {
+    "message": "名称（可留空，默认用域名）"
+  },
+  "phNewBase": {
+    "message": "地址，例如 https://ghfast.top"
+  },
+  "phRemoteUrl": {
+    "message": "https://raw.githubusercontent.com/.../mirrors.json"
+  },
+  "phToken": {
+    "message": "粘贴只读 PAT（可选）"
+  },
+  "lbCurrentParse": {
+    "message": "当前解析"
   }
 }

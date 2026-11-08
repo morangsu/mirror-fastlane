@@ -3,13 +3,15 @@
  * 可选： MFL_BIN=<浏览器路径>
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const EXT = join(ROOT, 'dist', 'edge');
+// 内置清单条数会随仓库里的清单变化（Action 每天更新），断言按文件实际条数来，别写死
+const BUILTIN_COUNT = JSON.parse(readFileSync(join(ROOT, 'data', 'builtin-mirrors.json'), 'utf8')).mirrors.length;
 const PORT = 9345;
 // 名称已本地化（__MSG_extName__）：无头浏览器默认 en-US，中文环境是另一个值
 const TARGET_NAMES = ['镜像快车道', 'Mirror Fastlane'];
@@ -129,7 +131,7 @@ try {
              rules: (s.ruleInfo || {}).count };
   })()`);
   ok('默认启用且探测模式为「仅按需」', st.enabled === true && st.probeMode === 'ondemand', JSON.stringify(st));
-  ok('内置镜像已灌入（10 条）', st.mirrors === 10, 'mirrors=' + st.mirrors);
+  ok('内置镜像已灌入（' + BUILTIN_COUNT + ' 条）', st.mirrors === BUILTIN_COUNT, 'mirrors=' + st.mirrors);
 
   /* 3. DNR 规则真实注册 */
   const rules = await evalIn(`(async () => {
@@ -143,12 +145,39 @@ try {
   ok('资源类型覆盖 main_frame（下载导航）', rules[0].t.includes('main_frame'), JSON.stringify(rules[0].t));
   ok('规则按优先级递减排序', rules.every((r, i) => i === 0 || r.p <= rules[i - 1].p), JSON.stringify(rules.map(r => r.p)));
 
+  // raw 规则默认不生成（需要 raw.githubusercontent.com 的可选权限，headless 里拿不到）。
+  // 这里直接检查「Chromium 是否接受这些分片正则」：手动注册一次，读回来再恢复。
+  const rawCheck = await evalIn(`(async () => {
+    const mirrors = (await chrome.storage.local.get('mirrors')).mirrors || [];
+    const settings = Object.assign({}, MFL.DEFAULT_SETTINGS, { raw: { enabled: true } });
+    const rules = MFL.buildRules(mirrors, settings, { rawAllowed: true }).filter(r => r.priority === 95);
+    try {
+      const cur = await chrome.declarativeNetRequest.getDynamicRules();
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: cur.map(r => r.id), addRules: rules });
+      const after = await chrome.declarativeNetRequest.getDynamicRules();
+      const raw = after.filter(r => r.priority === 95);
+      const hosts = [...new Set(raw.map(r => (String(r.action.redirect.regexSubstitution).match(/^https:\\/\\/([^/]+)\\//) || [])[1]))];
+      return { built: rules.length, applied: raw.length, types: raw.map(r => r.condition.resourceTypes), hosts };
+    } catch (e) {
+      return { error: String((e && e.message) || e) };
+    } finally {
+      try { await handlers['apply'](); } catch {}
+    }
+  })()`);
+  ok('raw 分片规则能被 Chromium 接受', rawCheck && rawCheck.applied === 5, JSON.stringify(rawCheck));
+  ok('raw 规则只作用于 main_frame',
+    rawCheck && rawCheck.types && rawCheck.types.every(t => t.length === 1 && t[0] === 'main_frame'),
+    JSON.stringify(rawCheck && rawCheck.types));
+  ok('raw 分片分散到多个镜像（不是全压一个）',
+    rawCheck && rawCheck.hosts && new Set(rawCheck.hosts).size >= 3, JSON.stringify(rawCheck && rawCheck.hosts));
+  ok('拿到权限前默认不生成 raw 规则', rules.filter(r => r.p === 95).length === 0, JSON.stringify(rules.map(r => r.p)));
+
   /* 4. 消息接口 */
   const state = await evalIn(`(async () => {
     const r = await handlers['get-state']();
     return { ok: !!r, mirrors: r && r.mirrors && r.mirrors.length, inWindow: r && r.inWindow };
   })()`);
-  ok('内部消息 get-state 正常', state.ok === true && state.mirrors === 10, JSON.stringify(state));
+  ok('内部消息 get-state 正常', state.ok === true && state.mirrors === BUILTIN_COUNT, JSON.stringify(state));
 
   /* 5. 生成规则的纯函数与真实规则一致 */
   const consistency = await evalIn(`(async () => {
@@ -186,6 +215,42 @@ try {
   ok('时段外不生成规则', winTest.offWindow === 0, JSON.stringify(winTest));
   ok('取消时段限制后规则恢复', winTest.restored > 0, JSON.stringify(winTest));
 
+  /* 7a. 规则被外部清空后必须自愈（指纹只证明「要的没变」，不证明「规则还在」） */
+  const heal = await evalIn(`(async () => {
+    const before = (await chrome.declarativeNetRequest.getDynamicRules()).length;
+    const cur = await chrome.declarativeNetRequest.getDynamicRules();
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: cur.map(r => r.id), addRules: [] });
+    const emptied = (await chrome.declarativeNetRequest.getDynamicRules()).length;
+    await applyRules(false);
+    const after = (await chrome.declarativeNetRequest.getDynamicRules()).length;
+    return { before, emptied, after };
+  })()`);
+  ok('规则被外部清空后，指纹路径能自愈',
+    heal.emptied === 0 && heal.after === heal.before, JSON.stringify(heal));
+
+  /* 7b. 并发写入串行化：探测几十秒后不能拿旧快照回滚用户操作 */
+  const race = await evalIn(`(async () => {
+    const before = await getMirrors();
+    const id = before[0].id;
+    const wasEnabled = before[0].enabled;
+    const wasNote = before[0].note || '';
+    const slow = mutateMirrors(list => new Promise(res => setTimeout(
+      () => res(list.map(m => m.id === id ? Object.assign({}, m, { note: 'slow-write' }) : m)), 120)));
+    await new Promise(r => setTimeout(r, 20));
+    const fast = mutateMirrors(list => list.map(
+      m => m.id === id ? Object.assign({}, m, { enabled: false }) : m));
+    await Promise.all([slow, fast]);
+    const after = await getMirrors();
+    const m = after.find(x => x.id === id);
+    const out = { note: m && m.note, enabled: m && m.enabled, count: after.length };
+    // 还原现场，别影响后面的断言
+    await mutateMirrors(list => list.map(x => x.id === id
+      ? Object.assign({}, x, { enabled: wasEnabled, note: wasNote }) : x));
+    return out;
+  })()`);
+  ok('并发写入互不覆盖（慢写 + 快写都保留）',
+    race.note === 'slow-write' && race.enabled === false, JSON.stringify(race));
+
   /* 8. 设置页渲染 */
   await browser.call('Target.createTarget', { url: `chrome-extension://${extId}/options/options.html` });
   await sleep(1600);
@@ -200,12 +265,19 @@ try {
       expression: `(() => ({ rows: document.querySelectorAll('#mirrorBody tr').length,
         tag: (document.getElementById('ruleTag')||{}).textContent,
         info: (document.getElementById('ruleInfo')||{}).textContent,
-        first: (document.querySelector('#mirrorBody tr')||{}).innerText || '' }))()`,
+        first: (document.querySelector('#mirrorBody tr')||{}).innerText || '',
+        uiRaw: !!document.getElementById('rawStatsInfo'),
+        uiDiag: !!document.getElementById('diagExport'),
+        i18nCount: document.querySelectorAll('[data-i18n]').length,
+        title: (document.querySelector('h1')||{}).textContent || '' }))()`,
       returnByValue: true,
     })).result.value;
-    ok('设置页渲染出 10 条镜像', v.rows === 10, 'rows=' + v.rows);
+    ok('设置页渲染出 ' + BUILTIN_COUNT + ' 条镜像', v.rows === BUILTIN_COUNT, 'rows=' + v.rows);
     ok('设置页显示规则状态', !!v.tag && v.tag !== '—', JSON.stringify(v).slice(0, 160));
     ok('首行含镜像域名', /https?|\./.test(v.first), v.first.replace(/\s+/g, ' ').slice(0, 80));
+    ok('raw 统计与诊断导出按钮都在', v.uiRaw && v.uiDiag, JSON.stringify({ uiRaw: v.uiRaw, uiDiag: v.uiDiag }));
+    ok('设置页关键标签已挂双语字典', v.i18nCount >= 30 && TARGET_NAMES.includes(v.title),
+      JSON.stringify({ count: v.i18nCount, title: v.title }));
 
     // 回归：连续勾选「启用哈希校验」+「自动记录」，两个开关必须同时为 true。
     // 以前第二次点击会用页面里过期的 state 拼 patch，把第一次的 enabled 覆盖回 false。

@@ -10,6 +10,7 @@ const EXT = join(process.cwd(), 'dist', 'edge');
 const PORT = 9347;
 const NAMES = ['镜像快车道', 'Mirror Fastlane'];   // 名称已本地化，两种语言都认
 const TARGET = 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip.sha256';
+const RAW_TARGET = 'https://raw.githubusercontent.com/morangsu/mirror-fastlane/main/data/builtin-mirrors.json';
 
 const BIN = process.env.MFL_BIN || [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -146,6 +147,30 @@ try {
       mirrorReq.url.slice(0, 130));
     ok('跳转链首跳是 github 原链', RE_GITHUB_RELEASE.test(rewritten[0].url), rewritten[0].url.slice(0, 96));
   }
+
+  /* raw 分片：导航到一个 raw 单文件，确认也被改写成「镜像前缀 + 原链」 */
+  const { targetId: rawTarget } = await b.call('Target.createTarget', { url: 'about:blank' });
+  const { sessionId: rs } = await b.call('Target.attachToTarget', { targetId: rawTarget, flatten: true });
+  await b.call('Network.enable', {}, rs);
+  await b.call('Page.enable', {}, rs);
+  await b.call('Page.navigate', { url: RAW_TARGET }, rs);
+  await sleep(6000);
+
+  const rawChains = new Map();
+  for (const e of b.events) {
+    if (e.method !== 'Network.requestWillBeSent' || e.sessionId !== rs) continue;
+    const id = e.params.requestId;
+    if (!rawChains.has(id)) rawChains.set(id, []);
+    rawChains.get(id).push({ url: e.params.request.url, redirected: !!e.params.redirectResponse });
+  }
+  const rawHit = [...rawChains.values()].find(c =>
+    c.some(x => x.url === RAW_TARGET) &&
+    c.some(x => x.url.includes('/https://raw.githubusercontent.com/')));
+  // 默认没拿到 raw.githubusercontent.com 的可选权限：Chrome 不会应用重定向，扩展也不该注册空转规则。
+  // 「加权限后会改写」由一次性验证脚本（review/verify-raw-e2e.mjs）实证，不进常驻测试。
+  ok('raw 原始请求确实发出了',
+    [...rawChains.values()].some(c => c.some(x => x.url === RAW_TARGET)), '未见 raw 请求');
+  ok('未授权时 raw 不被改写（遵守 host 权限约束）', !rawHit, rawHit ? '出现了改写' : '');
 
   b.close();
 } catch (e) {

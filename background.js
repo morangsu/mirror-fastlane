@@ -21,10 +21,21 @@ const K = {
   hashSeen: 'hashSeen',
   hashResults: 'hashResults',
   hashStatus: 'hashStatus',
+  ruleFingerprint: 'ruleFingerprint',
+  rawSample: 'rawSample',       // 最近 N 条「看得到结果」的 raw 请求
+  rawPending: 'rawPending',     // 已发起、还没结算的 raw 请求（跨 SW 唤醒保留）
+  rawReprobeAt: 'rawReprobeAt', // 上次因失败率触发重测的时间（冷却）
+  rawUnknown: 'rawUnknown',     // 观测不到结果的次数（多半是镜像域名没授权）
+  dlFailures: 'dlFailures',     // 真实下载失败计数（按 host）
 };
 
 const PROBE_TIMEOUT_MS = 12000;
-const PROBE_BYTES = 262144;
+const PROBE_RAW_TIMEOUT_MS = 6000;   // raw 是小文件，6 秒足够；超时只影响这一个分片
+const PROBE_BYTES = 65536;           // 64 KB/镜像：一轮全量约 1.1 MB，比原来的 4.3 MB 省 4 倍
+// 同时探测几个镜像：3 → 6。17 条全量从 ~6 轮降到 ~3 轮；峰值带宽 6×64 KB=384 KB，
+// 仍低于旧版 3×256 KB=768 KB，对镜像的压力反而更小。慢镜像/坏镜像不再逐个排队拖时间。
+const PROBE_CONCURRENCY = 6;
+const PROBE_ROTATE_MAX = 6;          // 非手动探测每轮最多测这几个「最久没测」的，其余沿用旧数据
 const PROBE_GAP_MS = 30 * 60 * 1000;   // 按需探测的最小间隔
 const ALARM_PROBE = 'mfl-probe';
 const ALARM_TICK = 'mfl-tick';
@@ -32,6 +43,10 @@ const ALARM_LIST = 'mfl-list';
 const LIST_REFRESH_MS = 24 * 3600 * 1000;   // 远程清单超过这个时间没取到过就自动拉一次
 const LIST_RETRY_MS = 30 * 60 * 1000;       // 失败后的最小重试间隔：避免每次 SW 唤醒都重打一遍候选源
 const LIST_DELETE_MS = 24 * 3600 * 1000;    // 镜像连续缺失超过这个时间才从列表移除（抗抖动）
+const RAW_SAMPLE_WINDOW_MS = 30 * 60 * 1000;
+const RAW_PENDING_TTL_MS = 20000;           // 发起后 20s 还没结果 → 记为「无法观测」，不算进分母
+const RAW_PENDING_MAX = 40;
+const DL_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
 
 /* ---------------------------------- 存储 ---------------------------------- */
 
@@ -58,31 +73,50 @@ async function setMirrors(list) {
   return list;
 }
 
+/**
+ * 镜像表的所有读-改-写都排队，且 fn 拿到的是「开始执行时」的最新列表。
+ * 以前探测会先读一份快照、几十秒后整表写回，用户在这期间关掉的开关、删掉的镜像会被静默回滚
+ * （CDP 复现：enabled_right_after_toggle=false → enabled_after_probe=true）。
+ */
+let mirrorChain = Promise.resolve();
+function mutateMirrors(fn) {
+  const run = mirrorChain.then(async () => {
+    const list = await getMirrors();
+    const next = await fn(list);
+    if (next && Array.isArray(next)) await setMirrors(next);
+    return next && Array.isArray(next) ? next : list;
+  });
+  mirrorChain = run.catch(() => {});   // 一次失败不阻断后续写入
+  return run;
+}
+
 async function seedMirrors() {
-  const cur = await getMirrors();
-  if (cur.length) return cur;
-  let data;
-  try {
-    const r = await fetch(ext.runtime.getURL('data/builtin-mirrors.json'));
-    data = await r.json();
-  } catch {
-    data = { mirrors: [] };
-  }
-  const list = (data.mirrors || []).map((m, i) => ({
-    id: MFL.idFromBase(m.base),
-    name: m.name || MFL.hostOf(m.base),
-    base: MFL.normalizeBase(m.base),
-    enabled: true,
-    source: 'builtin',
-    note: m.note || '',
-    seedKbps: m.seedKbps || 0,
-    healthy: true,
-    permitted: false,
-    stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
-    score: 1 - i / 100,
-  }));
-  await setMirrors(list);
-  return list;
+  // 走同一条队列：首次安装时用户可能已经打开设置页触发 refreshPermissions，
+  // 直接 setMirrors 会与它互相覆盖。
+  return mutateMirrors(async list => {
+    if (list.length) return undefined;
+    let data;
+    try {
+      const r = await fetch(ext.runtime.getURL('data/builtin-mirrors.json'));
+      data = await r.json();
+    } catch {
+      data = { mirrors: [] };
+    }
+    return (data.mirrors || []).map((m, i) => ({
+      id: MFL.idFromBase(m.base),
+      name: m.name || MFL.hostOf(m.base),
+      base: MFL.normalizeBase(m.base),
+      enabled: true,
+      source: 'builtin',
+      note: m.note || '',
+      seedKbps: m.seedKbps || 0,
+      healthy: true,
+      permitted: false,
+      stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
+      rawStats: { ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
+      score: 1 - i / 100,
+    }));
+  });
 }
 
 /* -------------------------------- 生效条件 -------------------------------- */
@@ -103,43 +137,83 @@ async function isActiveNow(settings) {
 // 所以所有重建排队执行。
 let applyChain = Promise.resolve();
 
-function applyRules() {
-  applyChain = applyChain.then(doApplyRules, doApplyRules);
+function applyRules(force) {
+  applyChain = applyChain.then(() => doApplyRules(force), () => doApplyRules(force));
   return applyChain;
 }
 
-async function doApplyRules() {
+async function doApplyRules(force) {
   const settings = await getSettings();
   const active = await isActiveNow(settings);
   const mirrors = await getMirrors();
-  const want = active ? MFL.buildRules(mirrors, settings) : [];
+  // Chrome 只对「扩展有 host 权限的请求 URL」应用 redirect，raw 是可选权限，得先确认拿到
+  const rawAllowed = !!(active && settings.raw && settings.raw.enabled &&
+    await hasPermission('https://raw.githubusercontent.com'));
+  const want = active ? MFL.buildRules(mirrors, settings, { rawAllowed }) : [];
+  const fp = MFL.fingerprintRules(want, active);
 
-  const existing = await ext.declarativeNetRequest.getDynamicRules();
-  const removeRuleIds = existing.map(r => r.id);
-  await ext.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules: want });
+  try {
+    // SW 每次唤醒都会跑到这里。规则没变就别再「全删全加」一次 DNR（还会写 storage）。
+    const cache = await ext.storage.local.get(K.ruleFingerprint);
+    let unchanged = !force && cache[K.ruleFingerprint] === fp;
+    if (unchanged) {
+      // 指纹只证明「我们要的规则没变」，不能证明「浏览器里还留着这些规则」：
+      // 浏览器更新、外部清空、上一次写入部分失败之后指纹仍匹配，会永远不重建。
+      // 用一次轻量查询兜底（~1ms，比全删全加重建便宜一个数量级）。
+      const cur = await ext.declarativeNetRequest.getDynamicRules();
+      if (cur.length !== want.length) unchanged = false;
+    }
+    if (!unchanged) {
+      const existing = await ext.declarativeNetRequest.getDynamicRules();
+      await ext.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: existing.map(r => r.id), addRules: want,
+      });
+      await ext.storage.local.set({ [K.ruleFingerprint]: fp });
+    }
 
-  const best = MFL.chooseMirrors(mirrors, settings);
-  const brief = m => (m ? { name: m.name, base: m.base, score: m.score, host: MFL.hostOf(m.base) } : null);
-  const useArchive = !!(settings.codeload && settings.codeload.enabled);
-  const primary = active ? brief(best.primary) : null;
-  const archive = active && useArchive ? brief(best.archive) : null;
+    const best = MFL.chooseMirrors(mirrors, settings);
+    const brief = m => (m ? { name: m.name, base: m.base, score: m.score, host: MFL.hostOf(m.base) } : null);
+    const useArchive = !!(settings.codeload && settings.codeload.enabled);
+    const primary = active ? brief(best.primary) : null;
+    const archive = active && useArchive ? brief(best.archive) : null;
+    const rawShards = (active && rawAllowed && settings.raw && settings.raw.enabled)
+      ? MFL.pickRawMirrors(mirrors, MFL.RAW_REGEXES.length)
+        .map((m, i) => ({ i, name: m.name, host: MFL.hostOf(m.base) }))
+      : [];
 
-  setBadge(active ? (want.length ? 'ON' : '!') : '', active ? (want.length ? '#1a7f37' : '#b54708') : '#6b7280');
-  dbg('rules', '规则重建完成', {
-    count: want.length, active, split: !!best.split,
-    best: primary && primary.base, archive: archive && archive.base,
-  });
-  await ext.storage.local.set({
-    ruleInfo: {
-      count: want.length,
-      active,
-      best: want.length ? primary : null,
-      archive: want.length ? archive : null,
-      split: !!best.split,
-      updatedAt: Date.now(),
-    },
-  });
-  return { count: want.length, active, best: primary, archive };
+    setBadge(active ? (want.length ? 'ON' : '!') : '', active ? (want.length ? '#1a7f37' : '#b54708') : '#6b7280');
+    dbg('rules', '规则重建完成', {
+      count: want.length, active, split: !!best.split, unchanged,
+      best: primary && primary.base, archive: archive && archive.base,
+    });
+    await ext.storage.local.set({
+      ruleInfo: {
+        count: want.length,
+        active,
+        best: want.length ? primary : null,
+        archive: want.length ? archive : null,
+        raw: want.length ? rawShards : [],
+        split: !!best.split,
+        error: '',
+        unchanged: !!unchanged,
+        updatedAt: Date.now(),
+      },
+    });
+    return { count: want.length, active, best: primary, archive, unchanged: !!unchanged };
+  } catch (e) {
+    // 以前 updateDynamicRules 一抛错，徽章与 ruleInfo 都不更新，界面还停在「生效中」，
+    // 实际规则是 0 条。现在明确写 error，设置页会显示红字。
+    const err = String(e && e.message ? e.message : e);
+    setBadge('!', '#cf222e');
+    dbg('rules', '规则重建失败', err);
+    await ext.storage.local.set({
+      ruleInfo: {
+        count: 0, active, best: null, archive: null, raw: [], split: false,
+        error: err, unchanged: false, updatedAt: Date.now(),
+      },
+    });
+    return { ok: false, error: err, count: 0, active };
+  }
 }
 
 function setBadge(text, color) {
@@ -170,6 +244,8 @@ async function probeOne(mirror) {
   let ttfb = 0;
   let bytes = 0;
   let status = 0;
+  let html = false;
+  let sniffed = false;
   try {
     const res = await fetch(url, {
       headers: { Range: 'bytes=0-' + (PROBE_BYTES - 1) },
@@ -179,12 +255,22 @@ async function probeOne(mirror) {
       credentials: 'omit',
     });
     status = res.status;
+    // 200 的 HTML 错误页/限流页不是文件；只判「有字节」会让它因传得快而排到第一
+    html = /text\/html/i.test(res.headers.get('content-type') || '');
     if (res.body) {
       const reader = res.body.getReader();
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!ttfb) ttfb = performance.now() - t0;
+        // content-type 不可靠：有些镜像把 HTML 错误页标成 text/plain。首块以 '<' 开头也算错误页
+        if (!sniffed && value && value.byteLength) {
+          sniffed = true;
+          try {
+            const head = new TextDecoder().decode(value.subarray(0, 64)).trimStart();
+            if (head.startsWith('<')) html = true;
+          } catch { /* 解码失败就当二进制 */ }
+        }
         bytes += value.byteLength;
         if (bytes >= PROBE_BYTES) { try { await reader.cancel(); } catch {} break; }
       }
@@ -192,9 +278,17 @@ async function probeOne(mirror) {
     const total = performance.now() - t0;
     const transfer = Math.max(total - ttfb, 1);
     const kbps = bytes / 1024 / (transfer / 1000);
-    return { status, bytes, ttfb: ttfb || total, kbps };
+    return { status, bytes, ttfb: ttfb || total, kbps, html };
   } catch (e) {
-    return { error: true, reason: (e && e.name === 'AbortError') ? 'timeout' : 'fetch-failed', status, bytes };
+    const timeout = e && e.name === 'AbortError';
+    // 超时但已经读到足够字节：链路是通的，只是没读满。算「部分成功」，
+    // 速度数据偏低会让它自然降权，不该直接判死。
+    if (timeout && bytes >= MFL.PROBE_MIN_BYTES) {
+      const total = performance.now() - t0;
+      const kbps = bytes / 1024 / Math.max(total - ttfb, 1) * 1000;
+      return { status, bytes, ttfb: ttfb || total, kbps, html, partial: true, reason: 'timeout-partial' };
+    }
+    return { error: true, reason: timeout ? 'timeout' : 'fetch-failed', status, bytes, html };
   } finally {
     clearTimeout(timer);
   }
@@ -213,22 +307,73 @@ async function runProbe(list, concurrency) {
         continue;
       }
       const r = await probeOne(m);
-      out.push({ mirror: m, permitted: true, result: r });
+      // 只有 release 探通了才有资格当 raw 分片，省掉一轮无谓请求
+      const raw = MFL.evaluateProbe(r).ok ? await probeRawOne(m) : null;
+      out.push({ mirror: m, permitted: true, result: r, raw });
     }
   });
   await Promise.all(workers);
   return out;
 }
 
-async function probeAll(reason) {
+/** raw 小文件探测：只看能不能拿到内容与首字节时间 */
+async function probeRawOne(mirror) {
+  const base = String(mirror.base || '').replace(/\/+$/, '');
+  const url = base + '/' + MFL.RAW_PROBE_URL;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_RAW_TIMEOUT_MS);
+  const t0 = performance.now();
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store', redirect: 'follow', credentials: 'omit' });
+    if (res.status !== 200) return { error: true, reason: 'http-' + res.status };
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 200) return { error: true, reason: 'empty' };   // 挡住 HTML 错误页
+    return { ttfb: Math.round(performance.now() - t0), bytes: buf.byteLength };
+  } catch (e) {
+    return { error: true, reason: (e && e.name === 'AbortError') ? 'timeout' : 'fetch-failed' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 把一次 raw 探测结果并入 rawStats（null 表示没测，保留旧值） */
+function nextRawStats(prev, raw) {
+  const p = prev || { ttfb: 0, failures: 0, lastProbe: 0, lastError: '' };
+  if (!raw) return p;
+  if (raw.error) {
+    return { ttfb: 0, failures: (p.failures || 0) + 1, lastProbe: Date.now(), lastError: raw.reason || 'error' };
+  }
+  return { ttfb: raw.ttfb || 0, failures: 0, lastProbe: Date.now(), lastError: '' };
+}
+
+async function probeAll(reason, onlyIds) {
+  const settings = await getSettings();
   const mirrors = await getMirrors();
-  const targets = mirrors.filter(m => m.enabled);
-  if (!targets.length) return { probed: 0 };
+  // onlyIds 给了就只测这些（比如刚授权的一批），避免把整张表重测一遍
+  const want = (onlyIds && onlyIds.length) ? new Set(onlyIds) : null;
+  let targets = mirrors.filter(m => m.enabled && (!want || want.has(m.id)));
 
-  const results = await runProbe(targets, 3);
+  if (!want && reason !== 'manual') {
+    // probeCacheHours 以前只是个没人读的死设置：按时/按需探测跳过缓存期内已测过且健康的，
+    // 再按「最久没测」轮转，每轮最多 PROBE_ROTATE_MAX 个 → 流量从 4.3 MB 降到 ~0.4 MB。
+    const cacheHours = Math.max(0, Math.min(24, Number(settings.probeCacheHours) || 0));
+    const cacheMs = cacheHours * 3600 * 1000;
+    if (cacheMs) {
+      targets = targets.filter(m => !(m.stats && m.stats.lastProbe &&
+        Date.now() - m.stats.lastProbe < cacheMs && m.healthy));
+    }
+    targets.sort((a, b) => ((a.stats && a.stats.lastProbe) || 0) - ((b.stats && b.stats.lastProbe) || 0));
+    if (targets.length > PROBE_ROTATE_MAX) targets = targets.slice(0, PROBE_ROTATE_MAX);
+  }
+  if (!targets.length) return { probed: 0, skipped: 'fresh-or-cached' };
+
+  const results = await runProbe(targets, PROBE_CONCURRENCY);
   const map = new Map(results.map(r => [r.mirror.id, r]));
+  const probedAt = Date.now();
 
-  const next = mirrors.map(m => {
+  // 用「执行时」的最新列表合并，且只覆盖探测相关字段：
+  // 用户在这几十秒里停用/删除/改名的镜像不会被旧快照写回来，也不会被重新加回来。
+  await mutateMirrors(latest => latest.map(m => {
     const r = map.get(m.id);
     if (!r) return m;
     if (!r.permitted) {
@@ -237,23 +382,45 @@ async function probeAll(reason) {
     const verdict = MFL.evaluateProbe(r.result);
     const fail = verdict.ok ? 0 : ((m.stats && m.stats.failures) || 0) + 1;
     return Object.assign({}, m, {
-      permitted: true,
       healthy: fail < 3,
+      rawStats: nextRawStats(m.rawStats, r.raw),
       stats: {
         kbps: verdict.ok ? Math.round(r.result.kbps) : 0,
         ttfb: verdict.ok ? Math.round(r.result.ttfb) : 0,
         failures: fail,
-        lastProbe: Date.now(),
+        lastProbe: probedAt,
         lastError: verdict.ok ? '' : verdict.reason,
       },
     });
-  });
+  }));
 
-  await setMirrors(next);
   const rules = await applyRules();
   if (reason !== 'silent') {
-    await ext.storage.local.set({ lastProbe: Date.now() });
+    await ext.storage.local.set({ lastProbe: probedAt });
   }
+  return { probed: results.length, rules };
+}
+
+/** 只重测 raw 分片（2 KB 小文件，比整轮 release 探测便宜两个数量级） */
+async function probeRawAll(reason) {
+  const mirrors = await getMirrors();
+  const candidates = MFL.pickRawMirrors(mirrors, 12).filter(m => m.enabled && m.healthy);
+  const allowed = [];
+  for (const m of candidates) {
+    if (await hasPermission(m.base)) allowed.push(m);
+  }
+  // raw 探测也是 2 KB 小文件，限制同样的并发，别一次打 12 个
+  const results = [];
+  for (let i = 0; i < allowed.length; i += PROBE_CONCURRENCY) {
+    const batch = allowed.slice(i, i + PROBE_CONCURRENCY);
+    results.push(...await Promise.all(batch.map(async m => ({ id: m.id, raw: await probeRawOne(m) }))));
+  }
+  const map = new Map(results.map(r => [r.id, r.raw]));
+  await mutateMirrors(latest => latest.map(m => map.has(m.id)
+    ? Object.assign({}, m, { rawStats: nextRawStats(m.rawStats, map.get(m.id)) })
+    : m));
+  const rules = await applyRules();
+  dbg('raw', 'raw 分片重测完成', { reason, probed: results.length, rules: rules && rules.count });
   return { probed: results.length, rules };
 }
 
@@ -284,6 +451,12 @@ async function fetchRemoteList() {
   mirrors.filter(m => m.enabled && m.permitted).sort((a, b) => (b.score || 0) - (a.score || 0))
     .forEach(m => candidates.push({ via: m.name, url: String(m.base).replace(/\/+$/, '') + '/' + rawUrl }));
   candidates.push({ via: '直连', url: rawUrl });
+  // github.com 已在必需 host 权限里，页面形态的 raw 地址可作为最后一道兜底；
+  // 它会 302 回 raw.githubusercontent.com，没拿到那个可选权限时可能失败，所以不承诺成功。
+  const pageUrl = rawUrl.replace(
+    /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/(.+)$/,
+    'https://github.com/$1/$2/raw/$3');
+  if (pageUrl !== rawUrl) candidates.push({ via: 'GitHub 页面直链', url: pageUrl });
 
   const tried = [];
   dbg('list', '候选来源', candidates.map(c => c.via));
@@ -363,13 +536,18 @@ async function applyRemoteList(data) {
   if (!incoming) return { added: 0, removed: 0, skipped: 'bad-shape' };
   const settings = await getSettings();
   const rl = settings.remoteList || {};
-  const cur = await getMirrors();
-  const o = await ext.storage.local.get(K.listMissing);
-  const res = MFL.syncMirrors(cur, incoming, {
-    allowDelete: rl.allowDelete !== false,
-    deleteAfterMs: LIST_DELETE_MS,
-  }, Date.now(), o[K.listMissing] || {});
-  if (res.added || res.removed) await setMirrors(res.list);
+  let res;
+  // 与探测/用户操作排队，避免拿旧快照整表写回
+  await mutateMirrors(async cur => {
+    const o = await ext.storage.local.get(K.listMissing);
+    res = MFL.syncMirrors(cur, incoming, {
+      allowDelete: rl.allowDelete !== false,
+      deleteAfterMs: LIST_DELETE_MS,
+    }, Date.now(), o[K.listMissing] || {});
+    return (res.added || res.removed) ? res.list : undefined;
+  });
+  // 新加的镜像可能已被「所有网站」这类授权覆盖，立刻按浏览器真实状态校正一次
+  if (res.added) await refreshPermissions();
   await ext.storage.local.set({ [K.listMissing]: res.missing });
   return { added: res.added, removed: res.removed };
 }
@@ -377,14 +555,14 @@ async function applyRemoteList(data) {
 /* ------------------------------- 权限同步 ------------------------------- */
 
 async function refreshPermissions() {
-  const list = await getMirrors();
-  let changed = false;
-  for (const m of list) {
-    const ok = await hasPermission(m.base);
-    if (m.permitted !== ok) { m.permitted = ok; changed = true; }
-  }
-  if (changed) await setMirrors(list);
-  return list;
+  return mutateMirrors(async list => {
+    let changed = false;
+    for (const m of list) {
+      const ok = await hasPermission(m.base);
+      if (m.permitted !== ok) { m.permitted = ok; changed = true; }
+    }
+    return changed ? list : undefined;
+  });
 }
 
 /* ------------------------------ 校验任务文件 ------------------------------ */
@@ -553,8 +731,15 @@ async function syncAlarms() {
     await ext.alarms.create(ALARM_PROBE, { periodInMinutes: wantProbe });
   }
 
+  // 5 分钟 tick 只用于「生效时段边界校正」。默认配置（时段关闭）下它是纯空转：
+  // 每天 288 次唤醒 SW 只为跑一遍规则重建。没开时段就别创建。
+  const wantTick = !!(settings.enabled && settings.activeWindow && settings.activeWindow.enabled);
   const tick = await ext.alarms.get(ALARM_TICK);
-  if (!tick) await ext.alarms.create(ALARM_TICK, { periodInMinutes: 5 });
+  if (!wantTick) {
+    if (tick) await ext.alarms.clear(ALARM_TICK);
+  } else if (!tick) {
+    await ext.alarms.create(ALARM_TICK, { periodInMinutes: 5 });
+  }
 
   // 远程清单：开启就排期（地址留空会回落到默认地址），每 12 小时探一次；真正的刷新由 24h 闸门决定
   const wantList = !!(settings.remoteList && settings.remoteList.enabled);
@@ -584,13 +769,27 @@ ext.alarms.onAlarm.addListener(async alarm => {
 async function getState() {
   const settings = await getSettings();
   const mirrors = await getMirrors();
-  const o = await ext.storage.local.get([K.lastProbe, K.listFetched, 'ruleInfo']);
+  const o = await ext.storage.local.get([
+    K.lastProbe, K.listFetched, 'ruleInfo',
+    K.rawSample, K.rawReprobeAt, K.rawUnknown, K.dlFailures,
+  ]);
   return {
     settings,
     mirrors,
     lastProbe: o[K.lastProbe] || 0,
     listFetched: o[K.listFetched] || null,
-    ruleInfo: o.ruleInfo || { count: 0, active: false, best: null },
+    ruleInfo: o.ruleInfo || { count: 0, active: false, best: null, error: '' },
+    rawStats: {
+      samples: o[K.rawSample] || [],
+      lastReprobeAt: o[K.rawReprobeAt] || 0,
+      // 兼容旧格式（纯数字）与新的窗口计数；超过 30 分钟视为 0
+      unknown: (() => {
+        const u = o[K.rawUnknown];
+        if (typeof u === 'number') return u;
+        return (u && Date.now() - (u.at || 0) < RAW_SAMPLE_WINDOW_MS) ? (u.n || 0) : 0;
+      })(),
+    },
+    dlFailures: o[K.dlFailures] || {},
     inWindow: await isActiveNow(settings),
   };
 }
@@ -629,69 +828,58 @@ const handlers = {
   'add-mirror': async msg => {
     const base = MFL.normalizeBase(msg.base);
     if (!base) return { ok: false, reason: 'invalid-url' };
-    const list = await getMirrors();
-    if (list.some(m => MFL.hostOf(m.base) === MFL.hostOf(base))) return { ok: false, reason: 'duplicate' };
-    list.push({
-      id: MFL.idFromBase(base),
-      name: msg.name || MFL.hostOf(base),
-      base,
-      enabled: true,
-      source: 'user',
-      note: '',
-      healthy: true,
-      permitted: !!msg.permitted,
-      stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
-      score: 0,
+    let duplicate = false;
+    await mutateMirrors(async cur => {
+      if (cur.some(m => MFL.hostOf(m.base) === MFL.hostOf(base))) { duplicate = true; return undefined; }
+      return cur.concat([{
+        id: MFL.idFromBase(base),
+        name: msg.name || MFL.hostOf(base),
+        base,
+        enabled: true,
+        source: 'user',
+        note: '',
+        healthy: true,
+        permitted: await hasPermission(base),   // 以浏览器真实状态为准，不写死
+        stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
+        rawStats: { ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
+        score: 0,
+      }]);
     });
-    await setMirrors(list);
+    if (duplicate) return { ok: false, reason: 'duplicate' };
     await applyRules();
     return { ok: true, state: await getState() };
   },
 
   'remove-mirror': async msg => {
-    const list = await getMirrors();
-    // 优先按 base 精确匹配（id 由 host 派生，a-b.com 与 a.b.com 会撞车）；否则按 id 只删第一条
-    let idx = msg.base ? list.findIndex(m => MFL.normalizeBase(m.base) === MFL.normalizeBase(msg.base)) : -1;
-    if (idx < 0) idx = list.findIndex(m => m.id === msg.id);
-    if (idx >= 0) {
-      const h = MFL.hostOf(list[idx].base);
-      list.splice(idx, 1);
-      await setMirrors(list);
-      // 顺手清掉这个 host 的缺失计时，避免 storage 里留无主记录
-      if (h) {
-        const o = await ext.storage.local.get(K.listMissing);
-        const miss = o[K.listMissing] || {};
-        if (miss[h]) { delete miss[h]; await ext.storage.local.set({ [K.listMissing]: miss }); }
-      }
-    } else {
-      await setMirrors(list);
+    let removedHost = '';
+    await mutateMirrors(list => {
+      // 优先按 base 精确匹配（id 由 host 派生，a-b.com 与 a.b.com 会撞车）；否则按 id 只删第一条
+      let idx = msg.base ? list.findIndex(m => MFL.normalizeBase(m.base) === MFL.normalizeBase(msg.base)) : -1;
+      if (idx < 0) idx = list.findIndex(m => m.id === msg.id);
+      if (idx < 0) return undefined;
+      removedHost = MFL.hostOf(list[idx].base);
+      return list.filter((_, i) => i !== idx);
+    });
+    // 顺手清掉这个 host 的缺失计时，避免 storage 里留无主记录
+    if (removedHost) {
+      const o = await ext.storage.local.get(K.listMissing);
+      const miss = o[K.listMissing] || {};
+      if (miss[removedHost]) { delete miss[removedHost]; await ext.storage.local.set({ [K.listMissing]: miss }); }
     }
     await applyRules();
     return { ok: true, state: await getState() };
   },
 
   'toggle-mirror': async msg => {
-    const list = await getMirrors();
-    const m = list.find(x => x.id === msg.id);
-    if (m) m.enabled = !!msg.enabled;
-    await setMirrors(list);
+    await mutateMirrors(list => list.map(m => m.id === msg.id ? Object.assign({}, m, { enabled: !!msg.enabled }) : m));
     await applyRules();
     return { ok: true, state: await getState() };
   },
 
-  'update-mirror': async msg => {
-    const list = await getMirrors();
-    const m = list.find(x => x.id === msg.id);
-    if (m) {
-      if (msg.name) m.name = msg.name;
-      if (typeof msg.permitted === 'boolean') m.permitted = msg.permitted;
-    }
-    await setMirrors(list);
-    await applyRules();
-    return { ok: true, state: await getState() };
-  },
+  // 'update-mirror' 已删除：1.4.7 之后没有调用方，而它正是「把 permitted 写死成 true」那条 bug 的入口。
 
   'probe-all': async () => probeAll('manual'),
+  'probe-these': async msg => probeAll('manual', msg.ids || []),
   'probe-one': async msg => {
     const list = await getMirrors();
     const m = list.find(x => x.id === msg.id);
@@ -700,24 +888,43 @@ const handlers = {
     if (!permitted) return { ok: false, reason: 'no-permission' };
     const r = await probeOne(m);
     const verdict = MFL.evaluateProbe(r);
-    m.permitted = true;
-    m.healthy = verdict.ok ? true : (m.stats.failures || 0) + 1 < 3;
-    m.stats = {
-      kbps: verdict.ok ? Math.round(r.kbps) : 0,
-      ttfb: verdict.ok ? Math.round(r.ttfb) : 0,
-      failures: verdict.ok ? 0 : (m.stats.failures || 0) + 1,
-      lastProbe: Date.now(),
-      lastError: verdict.ok ? '' : verdict.reason,
-    };
-    await setMirrors(list);
+    const raw = verdict.ok ? await probeRawOne(m) : null;
+    const at = Date.now();
+    await mutateMirrors(latest => latest.map(x => {
+      if (x.id !== msg.id) return x;
+      const fail = verdict.ok ? 0 : ((x.stats && x.stats.failures) || 0) + 1;
+      return Object.assign({}, x, {
+        healthy: fail < 3,
+        rawStats: nextRawStats(x.rawStats, raw),
+        stats: {
+          kbps: verdict.ok ? Math.round(r.kbps) : 0,
+          ttfb: verdict.ok ? Math.round(r.ttfb) : 0,
+          failures: fail,
+          lastProbe: at,
+          lastError: verdict.ok ? '' : verdict.reason,
+        },
+      });
+    }));
     await applyRules();
     return { ok: verdict.ok, verdict, state: await getState() };
   },
 
-  'apply': async () => ({ ok: true, rules: await applyRules() }),
+  'apply': async () => ({ ok: true, rules: await applyRules(true) }),
   'refresh-permissions': async () => { await refreshPermissions(); await applyRules(); return { ok: true, state: await getState() }; },
   'fetch-list': async () => runListFetch(),
   'sync-alarms': async () => { await syncAlarms(); return { ok: true }; },
+
+  // raw 失败率统计：手动重测 / 清空样本 / 一键换镜像 / 导出诊断快照
+  'raw-reprobe': async () => {
+    await ext.storage.local.set({ [K.rawReprobeAt]: Date.now(), [K.rawSample]: [] });
+    return Object.assign({ ok: true }, await probeRawAll('manual'));
+  },
+  'raw-sample-reset': async () => {
+    await ext.storage.local.remove([K.rawSample, K.rawPending, K.rawUnknown]);
+    return { ok: true, state: await getState() };
+  },
+  'switch-mirror': async () => switchMirror(),
+  'diagnostic': async () => ({ ok: true, data: await buildDiagnostic() }),
 
   'badge-info': async () => {
     const settings = await getSettings();
@@ -818,6 +1025,226 @@ ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;   // 异步响应
 });
 
+/* ---------------------- 真实请求反馈（正式包也生效） ----------------------
+ * MV3 里 webRequest 的**观察**事件仍可用（需要 webRequest 权限），但有一条实测硬约束：
+ *   - 只给 raw.githubusercontent.com 权限时，被 DNR 改写到镜像域名的请求只有 onBeforeRequest，
+ *     完成/错误事件根本不派发；
+ *   - 对镜像域名也有 host 权限后，onCompleted 会以镜像 URL 派发、statusCode 可读。
+ * 所以开启 raw 时会一并申请当前分片域名。没拿到的分片会留下「已发起但没结果」的 pending，
+ * 超时后记为 unknown（不计入失败率分母），避免「观察不到」被误判成「失败」而反复重测。
+ */
+let rawChain = Promise.resolve();
+function queueRaw(fn) {
+  rawChain = rawChain.then(fn, fn).catch(() => {});
+  return rawChain;
+}
+
+const isRawStart = u => /^https:\/\/raw\.githubusercontent\.com\//.test(String(u || ''));
+const hasRawTrace = u => String(u || '').includes('raw.githubusercontent.com');
+
+function expirePending(pending, now) {
+  const live = (pending || []).filter(p => p && now - (p.t || 0) < RAW_PENDING_TTL_MS);
+  return { live, expired: (pending || []).length - live.length };
+}
+
+/** 「无法观测」也按滑动窗口计数：否则长期运行会累加成天文数字，界面失去意义 */
+function bumpUnknown(prev, add, now) {
+  if (!add) return null;
+  const p = typeof prev === 'number' ? { n: prev, at: now } : (prev || { n: 0, at: now });
+  const base = (now - (p.at || 0) < RAW_SAMPLE_WINDOW_MS) ? (p.n || 0) : 0;
+  return { n: base + add, at: now };
+}
+
+/** 结算一条 raw 请求：成功/失败写进滑动窗口，然后看是否该立刻重测分片 */
+async function settleRaw(requestId, verdict) {
+  const now = Date.now();
+  const o = await ext.storage.local.get([K.rawSample, K.rawPending, K.rawUnknown, K.rawReprobeAt]);
+  const { live, expired } = expirePending(o[K.rawPending], now);
+  let idx = live.findIndex(p => p.id === requestId);
+  if (idx < 0) idx = 0;                       // 镜像 URL 的 requestId 可能与原始请求不同 → 结算最老的一条
+  if (!live.length) return;
+  const hit = live[idx];
+  live.splice(idx, 1);
+  const unknownNext = bumpUnknown(o[K.rawUnknown], expired, now);
+  const patch = { [K.rawPending]: live };
+  if (unknownNext) patch[K.rawUnknown] = unknownNext;
+
+  // 404/410 是「文件真的不存在」，不是镜像故障：不计成功也不计失败，直接丢弃
+  if (verdict === 'ignore') {
+    await ext.storage.local.set(patch);
+    dbg('raw', '忽略 404/410（文件不存在，不算镜像故障）', { host: hit && hit.host });
+    return;
+  }
+
+  const samples = MFL.pushRawSample(o[K.rawSample] || [], verdict === 'ok', now,
+    { windowMs: RAW_SAMPLE_WINDOW_MS, max: RAW_PENDING_MAX });
+  patch[K.rawSample] = samples;
+  await ext.storage.local.set(patch);
+  await maybeReprobe(samples, o[K.rawReprobeAt] || 0, unknownNext ? unknownNext.n : 0);
+}
+
+async function noteRawStart(requestId, url) {
+  const now = Date.now();
+  const o = await ext.storage.local.get(K.rawPending);
+  const { live, expired } = expirePending(o[K.rawPending], now);
+  let host = '';
+  try { host = new URL(String(url || '')).host; } catch { /* 忽略 */ }
+  live.push({ id: requestId, t: now, host });
+  const patch = { [K.rawPending]: live.slice(-RAW_PENDING_MAX) };
+  if (expired) {
+    const u = await ext.storage.local.get(K.rawUnknown);
+    const next = bumpUnknown(u[K.rawUnknown], expired, now);
+    if (next) patch[K.rawUnknown] = next;
+  }
+  await ext.storage.local.set(patch);
+}
+
+/** 失败率达到阈值 → 立刻重测 raw 分片、重排 top5；冷却 + 清空样本防风暴 */
+async function maybeReprobe(samples, lastAt, unknown) {
+  const settings = await getSettings();
+  const cfg = settings.raw || {};
+  if (!cfg.enabled) return;
+  const v = MFL.shouldReprobe(samples, {
+    threshold: cfg.failureThreshold,
+    minSamples: cfg.minSamples,
+    cooldownMin: cfg.cooldownMin,
+    lastAt,
+  }, Date.now());
+  dbg('raw', '失败率判定', { total: v.total, failures: v.failures, rate: v.rate + '%', reason: v.reason, unknown });
+  if (!v.trigger) return;
+  await ext.storage.local.set({ [K.rawReprobeAt]: Date.now(), [K.rawSample]: [] });
+  dbg('raw', '失败率超阈值，立刻重测 raw 分片');
+  await probeRawAll('failure-rate');
+}
+
+/**
+ * webRequest 是 optional permission：默认根本不存在这个 API，只有用户在设置页点过「同时加速 raw」
+ * 并同意授权后才出现。所以不能把 ext.webRequest 缓存成模块级常量，必须在授权后动态重取。
+ */
+let rawWatchersOn = false;
+function ensureRawWatchers() {
+  const WR = ext.webRequest;
+  if (rawWatchersOn || !WR || !WR.onBeforeRequest || !WR.onCompleted || !WR.onErrorOccurred) return false;
+  WR.onBeforeRequest.addListener(d => {
+    if (!isRawStart(d.url)) return;
+    queueRaw(async () => {
+      const s = await getSettings();
+      if (s.raw && s.raw.enabled) await noteRawStart(d.requestId, d.url);
+    });
+  }, { urls: ['https://raw.githubusercontent.com/*'], types: ['main_frame'] });
+
+  WR.onCompleted.addListener(d => {
+    if (!hasRawTrace(d.url)) return;
+    queueRaw(async () => {
+      const s = await getSettings();
+      if (s.raw && s.raw.enabled) {
+        await settleRaw(d.requestId, MFL.classifyRawStatus(d.statusCode));
+      }
+    });
+  }, { urls: ['<all_urls>'], types: ['main_frame'] });
+
+  WR.onErrorOccurred.addListener(d => {
+    if (!hasRawTrace(d.url)) return;
+    const err = String(d.error || '');
+    // 用户主动取消/导航跳走不算镜像故障
+    if (/ABORTED|USER_CANCELED/i.test(err)) return;
+    queueRaw(async () => {
+      const s = await getSettings();
+      if (s.raw && s.raw.enabled) await settleRaw(d.requestId, 'fail');
+    });
+  }, { urls: ['<all_urls>'], types: ['main_frame'] });
+  rawWatchersOn = true;
+  dbg('raw', '已注册 webRequest 观察（可选权限已授予）');
+  return true;
+}
+ensureRawWatchers();
+if (ext.permissions && ext.permissions.onAdded) {
+  ext.permissions.onAdded.addListener(() => { ensureRawWatchers(); });
+}
+
+/** 真实下载失败 → 给对应镜像记一次故障、自动换到下一个健康镜像 */
+async function noteDownloadFailure(id, err) {
+  let item;
+  try {
+    const arr = await ext.downloads.search({ id });
+    item = arr && arr[0];
+  } catch { return; }
+  if (!item) return;
+  const url = String(item.finalUrl || item.url || '');
+  if (!/^https:\/\//.test(url)) return;   // 任务文件是 data:/blob:，不算
+  const mirrors = await getMirrors();
+  const hit = mirrors.find(m => {
+    const h = MFL.hostOf(m.base);
+    return h && (url.indexOf('https://' + h + '/') === 0);
+  });
+  if (!hit) return;
+  const host = MFL.hostOf(hit.base);
+  const now = Date.now();
+  const o = await ext.storage.local.get(K.dlFailures);
+  const all = o[K.dlFailures] || {};
+  if (all[host] && now - all[host].lastAt < DL_FAILURE_COOLDOWN_MS) return;
+  all[host] = { count: (all[host] && all[host].count || 0) + 1, lastAt: now };
+  // 只保留最近 20 个 host，别让 storage 无限长
+  const keep = Object.entries(all).sort((a, b) => b[1].lastAt - a[1].lastAt).slice(0, 20);
+  await ext.storage.local.set({ [K.dlFailures]: Object.fromEntries(keep) });
+  await mutateMirrors(list => list.map(m => {
+    if (MFL.hostOf(m.base) !== host) return m;
+    const failures = ((m.stats && m.stats.failures) || 0) + 1;
+    return Object.assign({}, m, {
+      healthy: failures < 3,
+      stats: Object.assign({}, m.stats, {
+        failures,
+        lastError: '下载中断' + (err ? '（' + String(err).slice(0, 32) + '）' : ''),
+      }),
+    });
+  }));
+  await applyRules();
+  dbg('download', '真实下载失败，已降权并换镜像', { host, count: all[host].count });
+}
+
+/** 手动「换镜像重试」：把当前 primary 记一次故障，让 chooseMirrors 选下一个 */
+async function switchMirror() {
+  const settings = await getSettings();
+  const mirrors = await getMirrors();
+  const ranked = mirrors.filter(m => m.enabled && m.healthy);
+  // 只剩一个健康镜像时不要「换」——把它降权只会让规则变成 0 条，下载全部走主站
+  if (ranked.length < 2) return { ok: false, reason: 'no-alternative' };
+  const best = MFL.chooseMirrors(mirrors, settings).primary;
+  if (!best) return { ok: false, reason: 'no-mirror' };
+  await mutateMirrors(list => list.map(m => m.id === best.id
+    ? Object.assign({}, m, {
+      healthy: false,
+      stats: Object.assign({}, m.stats, { failures: (m.stats.failures || 0) + 1, lastError: '手动换镜像' }),
+    })
+    : m));
+  const rules = await applyRules();
+  return { ok: true, from: best.name, to: rules.best && rules.best.name, rules };
+}
+
+/** 生产包没有日志，用户主动导出一份脱敏快照用于自查 */
+async function buildDiagnostic() {
+  const st = await getState();
+  const s = st.settings || {};
+  return {
+    at: new Date().toISOString(),
+    version: ext.runtime.getManifest().version,
+    debug: !!ext.runtime.getManifest().debug,
+    ua: (typeof navigator !== 'undefined' && navigator.userAgent) || '',
+    settings: Object.assign({}, s, { token: s.token ? '***' : '' }),
+    ruleInfo: st.ruleInfo,
+    inWindow: st.inWindow,
+    lastProbe: st.lastProbe,
+    rawStats: st.rawStats,
+    dlFailures: st.dlFailures,
+    mirrors: (st.mirrors || []).map(m => ({
+      name: m.name, base: m.base, source: m.source, enabled: m.enabled,
+      permitted: m.permitted, healthy: m.healthy, score: m.score,
+      note: m.note || '', seedKbps: m.seedKbps || 0,
+      stats: m.stats || {}, rawStats: m.rawStats || {},
+    })),
+  };
+}
+
 /* ---------------------------- 下载事件（诊断） ----------------------------
  * 关键：任务文件到底落在哪个目录，扩展自己说了不算，浏览器给的真实路径才算。
  * 如果这里出现的是浏览器默认下载目录、而不是脚本实际扫描的目录，任务就会匹配不上。
@@ -846,26 +1273,48 @@ if (DEBUG_ON && ext.downloads && ext.downloads.onChanged) {
   });
 }
 
+// 真实下载失败的健康信号：正式包也注册（以前只在 debug 构建里挂），
+// 用户主动取消 / 浏览器关机 / 页面跳走不算镜像故障。
+if (ext.downloads && ext.downloads.onChanged) {
+  ext.downloads.onChanged.addListener(delta => {
+    if (!delta || !delta.state || delta.state.current !== 'interrupted') return;
+    const err = String((delta.error && delta.error.current) || '');
+    // 只认网络/服务端错误：USER_*、CRASHED、FILE_*（磁盘满/无权限）都不是镜像的错，
+    // 用黑名单排除会漏掉 FILE_NO_SPACE 这类，把磁盘问题误算成镜像故障。
+    if (!/^(NETWORK_|SERVER_)/.test(err)) return;
+    noteDownloadFailure(delta.id, err).catch(() => {});
+  });
+}
+
 /* --------------------------------- 生命周期 ------------------------------- */
 
-async function bootstrap() {
+/**
+ * full=true 只在安装/浏览器启动时跑：灌内置镜像 + 全量权限扫描 + 强制重建规则。
+ * SW 每次被唤醒走轻量路径：只核对闹钟与规则指纹，规则没变就不碰 DNR。
+ */
+async function bootstrap(full) {
   dbg('boot', '后台启动/唤醒', {
     version: ext.runtime.getManifest().version,
     debug: !!(ext.runtime.getManifest().debug),
+    full: !!full,
   });
-  // 首次安装时把默认设置落盘，避免 storage 里没有 settings 键
   const raw = await ext.storage.local.get(K.settings);
-  if (!raw[K.settings]) {
+  const first = !raw[K.settings];
+  if (first) {
     await ext.storage.local.set({ [K.settings]: JSON.parse(JSON.stringify(MFL.DEFAULT_SETTINGS)) });
   }
-  await seedMirrors();
-  await refreshPermissions();
+  if (full || first) {
+    await seedMirrors();
+    await refreshPermissions();
+    await applyRules(true);
+  } else {
+    await applyRules(false);
+  }
   await syncAlarms();
-  await applyRules();
   // 浏览器启动时顺带检查一次远程清单是否过期（被 24h 闸门挡着，不会每次都拉）
   maybeRefreshList(false).catch(() => {});
 }
 
-ext.runtime.onInstalled.addListener(() => { bootstrap().catch(() => {}); });
-ext.runtime.onStartup.addListener(() => { bootstrap().catch(() => {}); });
-bootstrap().catch(() => {});
+ext.runtime.onInstalled.addListener(() => { bootstrap(true).catch(() => {}); });
+ext.runtime.onStartup.addListener(() => { bootstrap(true).catch(() => {}); });
+bootstrap(false).catch(() => {});

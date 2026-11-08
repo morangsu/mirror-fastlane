@@ -43,7 +43,7 @@ Used for one narrow thing: writing a verification task file.
 
 When the user enables the optional hash-verification feature and clicks a GitHub download, the extension saves a few-dozen-byte JSON file (filename, expected SHA-256, repository, tag, asset id) into a dedicated "_mfl-tasks" subfolder of the browser's download directory. A companion local script, which the user installs separately, reads that file after the download finishes and compares the hash.
 
-The extension never reads, lists, moves or deletes the user's downloads. The feature is off by default, and the permission is not used for anything else.
+The extension never reads, lists, moves or deletes the user's downloads. The feature is off by default. The same permission is also used to observe `downloads.onChanged`: an interrupted download (excluding user cancellation / browser shutdown) lowers that mirror's health score so the next request goes to a different mirror. No download content is ever read.
 ```
 
 （616 字符）
@@ -68,6 +68,10 @@ Required hosts — the only two the extension touches automatically:
 • https://codeload.github.com/* — the same rewriting for source archives (feature off by default).
 
 Optional host permission https://*/* is NOT granted at install. It is requested per-origin from the options page, only for mirror domains the user adds, and only to run speed tests against them. Declining it does not break the core feature: rewriting works without host access to the mirror, the extension simply cannot rank mirrors automatically.
+
+• https://raw.githubusercontent.com/* — also covered by that optional permission, requested only when the user turns on "accelerate raw files". Chrome requires host permission for the URL being redirected; without it the raw rules are not generated at all. Declining it leaves release/archives rewriting untouched.
+• The hosts of the current raw shards (up to 5 concrete origins, never a wildcard for all sites) — requested in the same user gesture. Chrome only dispatches the completion/error event of a rewritten request when the extension also has host permission for the mirror host; without it the extension cannot tell whether a raw request succeeded, and counts the request as "unobservable" instead of "failed". The optional "Authorize raw shards" button re-requests them when the shard list changes.
+• webRequest — an OPTIONAL API permission, never requested at install. When the user enables raw acceleration, the extension asks for it in that same user gesture and uses it strictly for observation: URL and status code only, no blocking, no request body, no response body. On browsers that cannot grant it at runtime, raw acceleration still works and only the failure-rate statistics are unavailable.
 
 • https://api.github.com/* — also covered by that optional permission, but requested separately and dynamically only when the user enables hash verification. The extension then makes a read-only GET for the release asset's official SHA-256 digest; it never writes to GitHub and never uses this origin for mirror probing. It is not granted at install, and declining it disables hash verification while leaving rewriting untouched. A user-supplied read-only token, if any, is sent only in the Authorization header of that request.
 ```

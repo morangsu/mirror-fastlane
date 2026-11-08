@@ -10,5 +10,186 @@
   "extActionTitle": {
     "message": "Mirror Fastlane",
     "description": "Tooltip of the toolbar button."
+  },
+  "optTitle": {
+    "message": "Mirror Fastlane",
+    "description": "Options page heading"
+  },
+  "optSubtitle": {
+    "message": "Send open-source download links to a working mirror. Everything stays in this browser."
+  },
+  "secMirrors": {
+    "message": "Mirrors"
+  },
+  "secAdd": {
+    "message": "Add mirror"
+  },
+  "secRewrite": {
+    "message": "Rewriting"
+  },
+  "secProbe": {
+    "message": "Probing"
+  },
+  "secRemote": {
+    "message": "Remote list"
+  },
+  "secHash": {
+    "message": "Hash check"
+  },
+  "secDiag": {
+    "message": "Diagnostics"
+  },
+  "secRawStats": {
+    "message": "Raw request stats"
+  },
+  "masterSwitch": {
+    "message": "Master switch"
+  },
+  "ruleStatus": {
+    "message": "Rule status"
+  },
+  "batchGrant": {
+    "message": "Bulk permissions"
+  },
+  "grantRemoteLabel": {
+    "message": "Authorize remote mirrors"
+  },
+  "colEnabled": {
+    "message": "On"
+  },
+  "colName": {
+    "message": "Name / host"
+  },
+  "colSource": {
+    "message": "Source"
+  },
+  "colStatus": {
+    "message": "Status"
+  },
+  "colSpeed": {
+    "message": "Speed"
+  },
+  "colLatency": {
+    "message": "Latency"
+  },
+  "colActions": {
+    "message": "Actions"
+  },
+  "stDisabled": {
+    "message": "Off"
+  },
+  "stNeedPerm": {
+    "message": "Needs permission"
+  },
+  "stUnavailable": {
+    "message": "Unavailable"
+  },
+  "stUnmeasured": {
+    "message": "Not measured"
+  },
+  "stAvailable": {
+    "message": "OK"
+  },
+  "srcBuiltin": {
+    "message": "Built-in"
+  },
+  "srcRemote": {
+    "message": "Remote"
+  },
+  "srcManual": {
+    "message": "Manual"
+  },
+  "btnGrant": {
+    "message": "Authorize"
+  },
+  "btnProbe": {
+    "message": "Probe"
+  },
+  "btnRemove": {
+    "message": "Delete"
+  },
+  "btnGrantBuiltin": {
+    "message": "Authorize built-in mirrors"
+  },
+  "btnGrantRemote": {
+    "message": "Authorize remote mirrors"
+  },
+  "btnAdd": {
+    "message": "Add & authorize"
+  },
+  "btnProbeNow": {
+    "message": "Probe all now"
+  },
+  "btnFetchList": {
+    "message": "Fetch now"
+  },
+  "btnReapply": {
+    "message": "Rebuild rules"
+  },
+  "btnOpenVerify": {
+    "message": "Open verify page"
+  },
+  "btnRawReprobe": {
+    "message": "Re-probe raw now"
+  },
+  "btnDiagnostic": {
+    "message": "Export diagnostic snapshot"
+  },
+  "btnRawShards": {
+    "message": "Authorize raw shards"
+  },
+  "btnResetSamples": {
+    "message": "Reset samples"
+  },
+  "tagOutOfWindow": {
+    "message": "Outside window"
+  },
+  "tagActive": {
+    "message": "Active"
+  },
+  "tagNoMirror": {
+    "message": "No mirror"
+  },
+  "hashReady": {
+    "message": "Ready"
+  },
+  "hashNotReady": {
+    "message": "Not ready"
+  },
+  "lbRawThreshold": {
+    "message": "Failure threshold (%)"
+  },
+  "lbRawMinSamples": {
+    "message": "Minimum samples"
+  },
+  "lbRawCooldown": {
+    "message": "Re-probe cooldown (min)"
+  },
+  "lbDlFailures": {
+    "message": "Download failures"
+  },
+  "hintGrant": {
+    "message": "When the status says \"Needs permission\", click Authorize: the browser will ask once, for that mirror host only."
+  },
+  "hintRemote": {
+    "message": "Off by default: built-in mirrors work out of the box. If no mirror host is authorized, the list may be unreachable (direct fetch or the GitHub page URL is used as fallback)."
+  },
+  "hintRaw": {
+    "message": "Off by default. Turning it on requests access to raw.githubusercontent.com plus the current raw shard hosts, so the extension can measure real raw request failures. Only top-level navigation/downloads are rewritten; page fetch and images are untouched."
+  },
+  "phNewName": {
+    "message": "Name (optional, defaults to host)"
+  },
+  "phNewBase": {
+    "message": "Address, e.g. https://ghfast.top"
+  },
+  "phRemoteUrl": {
+    "message": "https://raw.githubusercontent.com/.../mirrors.json"
+  },
+  "phToken": {
+    "message": "Paste a read-only PAT (optional)"
+  },
+  "lbCurrentParse": {
+    "message": "Current resolution"
   }
 }

@@ -1,0 +1,50 @@
+name: test
+
+# 只跑纯 Node、无需浏览器与 PowerShell 的检查。
+# 下面这些故意不纳入，否则 CI 会长期红叉：
+#   test/browser-smoke.mjs / test/redirect-check.mjs / test/taskfile-e2e.mjs  → 需要真浏览器 + CDP
+#   test/run-ps-tests.mjs                                                      → 需要 Windows PowerShell
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # v7 起的官方 action 跑在 Node 24，与 setup-node 保持一致
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: 构建三个 dist
+        run: node build.mjs
+
+      # 四个纯逻辑单测：都不依赖浏览器，也没有平台专属二进制
+      - name: 纯逻辑单测
+        run: |
+          node test/run-tests.mjs
+          node test/debug-log-test.mjs
+          node test/content-state-test.mjs
+          node test/refresh-mirrors-test.mjs
+
+      # 发布体检自身的回归测试：完全在临时目录造数据，不读真实发布包
+      - name: 发布体检回归
+        run: node test/verify-release-test.mjs
+
+      - name: 校验镜像清单 schema
+        run: node tools/validate-mirrors.mjs
+
+      # store/packages/ 被 .gitignore 忽略，CI 上不存在发布包；
+      # --skip-packages 只做版本一致性 + 清单 schema，不碰 zip。
+      - name: 发版体检（skip-packages）
+        run: node tools/verify-release.mjs --skip-packages

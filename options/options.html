@@ -68,50 +68,58 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>镜像快车道</h1>
-  <div class="sub">把开源项目的下载链接切换到可用镜像。所有配置只保存在本机浏览器。</div>
+  <h1 data-i18n="optTitle">镜像快车道</h1>
+  <div class="sub" data-i18n="optSubtitle">把开源项目的下载链接切换到可用镜像。所有配置只保存在本机浏览器。</div>
 
   <div class="card" id="statusCard">
     <div class="row">
-      <div class="k"><b>总开关</b><small>关闭后不再改写任何链接，页面标记也会一并移除</small></div>
+      <div class="k"><b data-i18n="masterSwitch">总开关</b><small>关闭后不再改写任何链接，页面标记也会一并移除</small></div>
       <input type="checkbox" id="enabled">
     </div>
     <div class="row">
-      <div class="k"><b>规则状态</b><small id="ruleInfo">—</small></div>
+      <div class="k"><b data-i18n="ruleStatus">规则状态</b><small id="ruleInfo">—</small></div>
       <span class="tag" id="ruleTag">—</span>
     </div>
+    <div id="ruleError" class="warnbox" style="display:none;margin-top:10px"></div>
   </div>
 
-  <h2>镜像列表</h2>
+  <h2 data-i18n="secMirrors">镜像列表</h2>
   <div class="card" style="padding:11px 16px;margin-bottom:10px">
     <div class="row" style="border:0;padding:0">
-      <div class="k"><b>批量授权</b><small>测速需要「访问镜像域名」的权限；跳转本身不需要授权，所以不授权也能用，只是无法自动排序</small></div>
-      <button id="grantAll" class="primary">一键授权内置镜像</button>
+      <div class="k"><b data-i18n="batchGrant">批量授权</b><small>测速需要「访问镜像域名」的权限；跳转本身不需要授权，所以不授权也能用，只是无法自动排序</small></div>
+      <button id="grantAll" class="primary" data-i18n="btnGrantBuiltin">一键授权内置镜像</button>
+    </div>
+    <div class="row" style="border:0;padding:0">
+      <div class="k">
+        <b data-i18n="grantRemoteLabel">授权远程镜像</b>
+        <small>只授权「此刻已经在列表里」的远程镜像（来源列显示「远程」的那些）。之后清单自动新增的镜像<b>不会</b>跟着被授权，需要你再点一次——浏览器只允许在点击当下申请权限。</small>
+      </div>
+      <button id="grantRemote" class="primary" data-i18n="btnGrantRemote">授权远程镜像</button>
     </div>
   </div>
   <div class="card" style="padding:0;overflow:hidden">
     <table>
       <thead>
         <tr>
-          <th style="width:42px">启用</th>
-          <th>名称 / 地址</th>
-          <th style="width:70px">来源</th>
-          <th style="width:96px">状态</th>
-          <th style="width:96px">速度</th>
-          <th style="width:80px">延迟</th>
-          <th style="width:150px">操作</th>
+          <th style="width:42px" data-i18n="colEnabled">启用</th>
+          <th data-i18n="colName">名称 / 地址</th>
+          <th style="width:70px" data-i18n="colSource">来源</th>
+          <th style="width:96px" data-i18n="colStatus">状态</th>
+          <th style="width:96px" data-i18n="colSpeed">速度</th>
+          <th style="width:80px" data-i18n="colLatency">延迟</th>
+          <th style="width:150px" data-i18n="colActions">操作</th>
         </tr>
       </thead>
       <tbody id="mirrorBody"></tbody>
     </table>
   </div>
-  <div class="hint">状态为「需授权」时，点「授权」后浏览器会弹一次确认——这是浏览器要求的最小权限授予，只针对该镜像域名。</div>
+  <div class="hint" data-i18n="hintGrant">状态为「需授权」时，点「授权」后浏览器会弹一次确认——这是浏览器要求的最小权限授予，只针对该镜像域名。</div>
 
-  <h2>添加镜像</h2>
+  <h2 data-i18n="secAdd">添加镜像</h2>
   <div class="card">
     <div class="grid2">
-      <input type="text" id="newName" placeholder="名称（可留空，默认用域名）">
-      <input type="text" id="newBase" placeholder="地址，例如 https://ghfast.top">
+      <input type="text" id="newName" placeholder="名称（可留空，默认用域名）" data-i18n-placeholder="phNewName">
+      <input type="text" id="newBase" placeholder="地址，例如 https://ghfast.top" data-i18n-placeholder="phNewBase">
     </div>
     <div class="row" style="border:0;padding-top:10px">
       <div class="k"></div>
@@ -119,7 +127,7 @@
     </div>
   </div>
 
-  <h2>改写行为</h2>
+  <h2 data-i18n="secRewrite">改写行为</h2>
   <div class="card">
     <div class="row">
       <div class="k"><b>页面标记</b><small>在下载链接旁显示「镜像」角标</small></div>
@@ -141,9 +149,16 @@
       <div class="k"><b>直链与源码包分走不同镜像</b><small>直链用最快的镜像，源码包换第二个健康镜像，避免两类流量挤在同一条链路上；只有一个可用镜像时自动退化为同一个</small></div>
       <input type="checkbox" id="splitMirrors">
     </div>
+    <div class="row">
+      <div class="k">
+        <b>同时加速 raw 文件</b>
+        <small data-i18n="hintRaw">默认关闭。开启会申请 raw.githubusercontent.com 与当前 raw 分片域名的访问权限，用于统计真实 raw 请求的成败；只改「直接打开/下载」，不改页面里的 fetch 与图片。</small>
+      </div>
+      <input type="checkbox" id="rawEnabled">
+    </div>
   </div>
 
-  <h2>探测策略</h2>
+  <h2 data-i18n="secProbe">探测策略</h2>
   <div class="card">
     <div class="row">
       <div class="k"><b>探测模式</b><small>「仅按需」只在你打开 GitHub 页面时才测速，最省流量</small></div>
@@ -167,31 +182,62 @@
     </div>
     <div class="row">
       <div class="k"></div>
-      <button id="probeNow">立即测速全部</button>
+      <button id="probeNow" data-i18n="btnProbeNow">立即测速全部</button>
     </div>
   </div>
 
-  <h2>远程清单</h2>
+  <h2 data-i18n="secRawStats">raw 请求统计</h2>
+  <div class="card">
+    <div class="row">
+      <div class="k"><b data-i18n="lbDlFailures">最近观测</b><small id="rawStatsInfo">—</small></div>
+      <span>
+        <button id="rawReprobe" data-i18n="btnRawReprobe">立即重测 raw</button>
+        <button id="rawShards" data-i18n="btnRawShards">补授权 raw 分片</button>
+        <button id="rawReset" data-i18n="btnResetSamples">清空样本</button>
+      </span>
+    </div>
+    <div class="grid2" style="margin-top:8px">
+      <div class="row" style="border:0;padding:4px 0">
+        <div class="k"><b data-i18n="lbRawThreshold">失败率阈值（%）</b><small>最近 30 分钟内，失败占比达到这个值就立刻重测并换分片</small></div>
+        <input type="number" id="rawThreshold" min="10" max="100" step="5" style="width:90px">
+      </div>
+      <div class="row" style="border:0;padding:4px 0">
+        <div class="k"><b data-i18n="lbRawMinSamples">最少样本数</b><small>样本太少不触发，避免偶发失败误判</small></div>
+        <input type="number" id="rawMinSamples" min="2" max="40" step="1" style="width:90px">
+      </div>
+      <div class="row" style="border:0;padding:4px 0">
+        <div class="k"><b data-i18n="lbRawCooldown">重测冷却（分钟）</b><small>触发后至少隔这么久才会再触发</small></div>
+        <input type="number" id="rawCooldown" min="1" max="120" step="1" style="width:90px">
+      </div>
+      <div class="row" style="border:0;padding:4px 0">
+        <div class="k"><b data-i18n="lbDlFailures">下载失败</b><small id="dlFailInfo">—</small></div>
+        <span></span>
+      </div>
+    </div>
+  </div>
+
+  <h2 data-i18n="secRemote">远程清单</h2>
   <div class="card">
     <div class="row">
       <div class="k"><b>启用远程清单</b><small>默认关闭。开启后会每 24 小时自动刷新一次（距上次成功获取不满 24 小时的不会重复请求），也可随时点「立即获取」</small></div>
       <input type="checkbox" id="remoteEnabled">
     </div>
+    <div class="hint" data-i18n="hintRemote">默认关闭：内置镜像开箱可用，不必启用远程清单。若一个镜像域名都没授权，清单可能取不到（此时会走直连或 GitHub 页面直链兜底）。</div>
     <div class="row">
       <div class="k"><b>允许删除镜像</b><small>远程清单里连续 24 小时取不到的「远程加入」镜像会被自动移除。内置与手动添加的永不删除。</small></div>
       <input type="checkbox" id="remoteAllowDelete">
     </div>
     <div class="row">
       <div class="k"><b>清单地址</b><small>JSON 格式，可用 <code>{"mirrors":[{"name":"x","base":"https://x"}]}</code> 或字符串数组</small></div>
-      <input type="text" id="remoteUrl" placeholder="https://raw.githubusercontent.com/.../mirrors.json" style="max-width:420px">
+      <input type="text" id="remoteUrl" placeholder="https://raw.githubusercontent.com/.../mirrors.json" data-i18n-placeholder="phRemoteUrl" style="max-width:420px">
     </div>
     <div class="row">
       <div class="k"><b>上次获取</b><small id="remoteInfo">—</small></div>
-      <button id="fetchList">立即获取</button>
+      <button id="fetchList" data-i18n="btnFetchList">立即获取</button>
     </div>
   </div>
 
-  <h2>哈希校验</h2>
+  <h2 data-i18n="secHash">哈希校验</h2>
   <div class="card">
     <div class="row">
       <div class="k"><b>自动校验状态</b><small id="hashStatusHint">正在检查…</small></div>
@@ -210,11 +256,11 @@
     </div>
     <div class="row">
       <div class="k"><b>GitHub Token（可选）</b><small>只用于提高 API 限额（60/小时 → 5000/小时），只发给 api.github.com</small></div>
-      <input type="password" id="token" placeholder="粘贴只读 PAT（可选）" style="max-width:420px">
+      <input type="password" id="token" placeholder="粘贴只读 PAT（可选）" data-i18n-placeholder="phToken" style="max-width:420px">
     </div>
     <div class="row">
       <div class="k"><small id="hashAutoHint">任务文件落在浏览器自己的下载目录，脚本会自动找到它</small></div>
-      <button id="openVerify">打开校验页</button>
+      <button id="openVerify" data-i18n="btnOpenVerify">打开校验页</button>
     </div>
   </div>
   <div class="warnbox" style="margin-top:10px">
@@ -225,11 +271,14 @@
     目的是不让磁盘上可被改写的任务文件成为唯一依据。<b>请自行审查其安全性与可靠性</b>。
   </div>
 
-  <h2>诊断</h2>
+  <h2 data-i18n="secDiag">诊断</h2>
   <div class="card">
     <div class="row">
-      <div class="k"><b>当前解析</b><small id="diag">—</small></div>
-      <button id="reapply">重建规则</button>
+      <div class="k"><b data-i18n="lbCurrentParse">当前解析</b><small id="diag">—</small></div>
+      <span>
+        <button id="diagExport" data-i18n="btnDiagnostic">导出诊断快照</button>
+        <button id="reapply" data-i18n="btnReapply">重建规则</button>
+      </span>
     </div>
   </div>
 

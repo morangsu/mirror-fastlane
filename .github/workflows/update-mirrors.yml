@@ -33,6 +33,11 @@ jobs:
       - name: 刷新清单（整段覆盖写入，源为空则失败且不覆盖）
         run: node tools/refresh-mirrors.mjs
 
+      # 刷新写出后立即校验 schema。校验失败 → 本步骤非零退出 →
+      # 后续提交步骤不会被调度（本 workflow 未设置强制执行的 if 条件），坏清单绝不进 main。
+      - name: 校验清单（schema 不合法则拒绝提交）
+        run: node tools/validate-mirrors.mjs
+
       - name: 有变化才提交
         run: |
           if git diff --quiet -- data/builtin-mirrors.json; then

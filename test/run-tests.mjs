@@ -163,6 +163,12 @@ eq('429 失败', MFL.evaluateProbe({ status: 429, bytes: 0, kbps: 0 }).ok, false
 eq('过慢失败', MFL.evaluateProbe({ status: 206, bytes: 262144, kbps: 5 }).ok, false);
 eq('空响应失败', MFL.evaluateProbe({ status: 206, bytes: 0, kbps: 0 }).ok, false);
 eq('超时失败', MFL.evaluateProbe({ error: true, reason: 'timeout' }).reason, 'timeout');
+eq('200 的 HTML 错误页失败', MFL.evaluateProbe({ status: 200, bytes: 2000, kbps: 900, html: true }).ok, false);
+eq('只读到几个字节失败', MFL.evaluateProbe({ status: 200, bytes: 100, kbps: 900 }).reason, 'too-small');
+eq('超时但已读够字节算部分成功',
+  MFL.evaluateProbe({ status: 206, bytes: 150000, kbps: 5, partial: true }).reason, 'partial');
+eq('部分成功不会被慢速阈值误杀',
+  MFL.evaluateProbe({ status: 206, bytes: 150000, kbps: 5, partial: true }).ok, true);
 
 /* ------------------------------ 7. outbox ------------------------------ */
 
@@ -398,6 +404,20 @@ ok('设置页会为哈希功能申请 api.github.com 权限',
 ok('manifest 未申请 tabs / webRequest 等宽权限',
   !JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8')).permissions
     .some(p => ['tabs', 'webRequest', 'history', 'cookies'].includes(p)));
+// raw 失败率统计需要观察请求，但绝不能默认申请宽权限：只能作为可选权限、由设置页在用户手势里申请
+ok('webRequest 只能出现在 optional_permissions 且由设置页按需申请',
+  Array.isArray(mf.optional_permissions) && mf.optional_permissions.includes('webRequest') &&
+  /webRequest/.test(optJs) && /permissions\.request/.test(optJs));
+ok('设置页与两种语言字典都覆盖关键标签', (() => {
+  const keys = ['optTitle', 'secMirrors', 'btnGrant', 'btnProbe', 'btnRemove',
+    'stNeedPerm', 'stAvailable', 'srcRemote', 'btnRawReprobe', 'btnDiagnostic'];
+  return ['en', 'zh_CN'].every(loc => {
+    const p = join(ROOT, '_locales', loc, 'messages.json');
+    if (!existsSync(p)) return false;
+    const j = JSON.parse(readFileSync(p, 'utf8'));
+    return keys.every(k => j[k] && typeof j[k].message === 'string' && j[k].message.length);
+  });
+})());
 
 /* ------------------------------ 10b. 发布防呆 ------------------------------ */
 
@@ -587,6 +607,67 @@ group('8.7 镜像清单同步（增删 + 24h 迟滞）');
   ok('无主缺失记录被清理', !rp.missing['gone.example']);
 })();
 
+group('8.8 raw 分片规则');
+(() => {
+  const mk = (base, extra) => Object.assign({
+    id: MFL.idFromBase(base), name: base, base, source: 'builtin',
+    enabled: true, healthy: true,
+    stats: { kbps: 100, ttfb: 100, failures: 0, lastProbe: 1, lastError: '' }, score: 0,
+  }, extra || {});
+  const on = Object.assign({}, MFL.DEFAULT_SETTINGS, { raw: { enabled: true } });
+  const off = Object.assign({}, MFL.DEFAULT_SETTINGS, { raw: { enabled: false } });
+
+  const list = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(x => mk('https://' + x + '.example'));
+  const rules = MFL.buildRules(list, on);
+  const raw = rules.filter(r => r.priority === 95);
+
+  eq('raw：生成 5 条分片规则', raw.length, 5);
+  ok('raw：只作用于 main_frame', raw.every(r => JSON.stringify(r.condition.resourceTypes) === '["main_frame"]'));
+  ok('raw：关闭开关后不生成', MFL.buildRules(list, off).filter(r => r.priority === 95).length === 0);
+  ok('raw：没拿到 host 权限时不生成（注册了也不生效）',
+    MFL.buildRules(list, on, { rawAllowed: false }).filter(r => r.priority === 95).length === 0);
+
+  // 分片正则必须覆盖各种 owner 首字符，且每条 URL 只命中一条
+  const hit = url => raw.filter(r => new RegExp(r.condition.regexFilter).test(url)).length;
+  const owners = ['alice', 'bob', 'frank', 'kate', 'peter', 'zoe', '9lives', '_weird', 'UPPER'];
+  for (const o of owners) {
+    eq('raw 分片覆盖 owner=' + o, hit('https://raw.githubusercontent.com/' + o + '/repo/main/a.md'), 1);
+  }
+  eq('raw：不会命中 release 直链',
+    hit('https://github.com/o/r/releases/download/v1/a.zip'), 0);
+  eq('raw：不会命中 codeload',
+    hit('https://codeload.github.com/o/r/tar.gz/v1'), 0);
+
+  // 重定向目标是「镜像 base + 原 URL」
+  const u = 'https://raw.githubusercontent.com/alice/repo/main/x.json';
+  const r0 = raw.find(r => new RegExp(r.condition.regexFilter).test(u));
+  eq('raw：重定向结果为镜像前缀 + 原地址',
+    MFL.applyRegexSubstitution(r0.condition.regexFilter, r0.action.redirect.regexSubstitution, u),
+    r0.action.redirect.regexSubstitution.split('\\0')[0] + u);
+
+  // 只有 2 个镜像时仍然生成 5 条，循环复用
+  const two = [mk('https://x.example'), mk('https://y.example')];
+  const raw2 = MFL.buildRules(two, on).filter(r => r.priority === 95);
+  eq('raw：镜像不足 5 个仍覆盖 5 个分片', raw2.length, 5);
+  const hosts2 = new Set(raw2.map(r => r.action.redirect.regexSubstitution.split('/')[2]));
+  eq('raw：循环复用这两个镜像', hosts2.size, 2);
+
+  // 排序：测过 raw 的、失败少的、延迟低的优先
+  const withRaw = [
+    mk('https://slow.example', { rawStats: { ttfb: 900, failures: 0, lastProbe: 1, lastError: '' } }),
+    mk('https://fast.example', { rawStats: { ttfb: 120, failures: 0, lastProbe: 1, lastError: '' } }),
+    mk('https://bad.example', { rawStats: { ttfb: 0, failures: 2, lastProbe: 1, lastError: 'timeout' } }),
+    mk('https://never.example'),
+  ];
+  const picked = MFL.pickRawMirrors(withRaw, 5);
+  eq('raw 排序：最快的排第一', picked[0].base, 'https://fast.example');
+  eq('raw 排序：失败多的排最后（未测过的在其前）', picked[picked.length - 1].base, 'https://bad.example');
+  ok('raw 排序：上限生效', MFL.pickRawMirrors(withRaw, 2).length === 2);
+  ok('raw 排序：不健康的被排除',
+    !MFL.pickRawMirrors([mk('https://ok.example'), mk('https://dead.example', { healthy: false })], 5)
+      .some(m => m.base.includes('dead')));
+})();
+
 group('12. 构建产物');
 const edgeMf = join(ROOT, 'dist/edge/manifest.json');
 const ffMf = join(ROOT, 'dist/firefox/manifest.json');
@@ -601,6 +682,60 @@ if (existsSync(edgeMf) && existsSync(ffMf)) {
 } else {
   ok('构建产物存在（先运行 node build.mjs）', false, '未找到 dist/');
 }
+
+/* ----------------------- 13. 规则指纹 / raw 失败率 ----------------------- */
+
+group('13. 规则指纹与 raw 失败率');
+
+const fpA = MFL.fingerprintRules([{ id: 1, priority: 100 }], true);
+eq('规则指纹稳定可复现', fpA, MFL.fingerprintRules([{ id: 1, priority: 100 }], true));
+ok('规则内容变化 → 指纹变化', fpA !== MFL.fingerprintRules([{ id: 2, priority: 100 }], true));
+ok('生效状态变化 → 指纹变化', fpA !== MFL.fingerprintRules([{ id: 1, priority: 100 }], false));
+
+const T0 = 1700000000000;
+let smp = [];
+for (let i = 0; i < 4; i++) smp = MFL.pushRawSample(smp, true, T0 + i * 1000);
+smp = MFL.pushRawSample(smp, false, T0 + 5000);
+smp = MFL.pushRawSample(smp, false, T0 + 6000);
+eq('样本按时间窗累计', smp.length, 6);
+eq('超窗样本被裁掉', MFL.pushRawSample([{ t: T0 - 31 * 60 * 1000, ok: true }], true, T0).length, 1);
+eq('样本条数有上限', MFL.pushRawSample(
+  Array.from({ length: 60 }, (_, i) => ({ t: T0 + i, ok: true })), true, T0 + 61, { max: 40 }).length, 40);
+
+const mkSamples = (okN, failN) => [
+  ...Array.from({ length: okN }, (_, i) => ({ t: T0 + i, ok: true })),
+  ...Array.from({ length: failN }, (_, i) => ({ t: T0 + 100 + i, ok: false })),
+];
+const OPTS = { threshold: 30, minSamples: 5, cooldownMin: 5, lastAt: 0 };
+ok('失败率 2/6=33% 达到 30% 阈值 → 触发重测', MFL.shouldReprobe(mkSamples(4, 2), OPTS, T0).trigger);
+ok('失败率 1/6=17% 不触发', !MFL.shouldReprobe(mkSamples(5, 1), OPTS, T0).trigger);
+eq('样本不足不触发', MFL.shouldReprobe(mkSamples(3, 1), OPTS, T0).reason, 'samples');
+eq('冷却期内不重复触发',
+  MFL.shouldReprobe(mkSamples(4, 2), Object.assign({}, OPTS, { lastAt: T0 - 1000 }), T0).reason, 'cooldown');
+eq('失败率按百分比返回', MFL.shouldReprobe(mkSamples(4, 2), OPTS, T0).rate, 33.3);
+eq('200 算成功', MFL.classifyRawStatus(200), 'ok');
+eq('206 算成功', MFL.classifyRawStatus(206), 'ok');
+eq('404 忽略（文件不存在，不是镜像故障）', MFL.classifyRawStatus(404), 'ignore');
+eq('410 忽略', MFL.classifyRawStatus(410), 'ignore');
+eq('429 失败（限流该换分片）', MFL.classifyRawStatus(429), 'fail');
+eq('500 失败', MFL.classifyRawStatus(500), 'fail');
+eq('403 失败', MFL.classifyRawStatus(403), 'fail');
+eq('0 / 未知状态失败', MFL.classifyRawStatus(0), 'fail');
+eq('默认阈值 30%', MFL.DEFAULT_SETTINGS.raw.failureThreshold, 30);
+eq('远程清单默认关（有内置镜像就够）', MFL.DEFAULT_SETTINGS.remoteList.enabled, false);
+eq('raw 默认关（可选权限，需用户点一次）', MFL.DEFAULT_SETTINGS.raw.enabled, false);
+eq('探测预算降到 64 KB', (() => {
+  const bg = readFileSync(join(ROOT, 'background.js'), 'utf8');
+  return /const PROBE_BYTES = 65536/.test(bg);
+})(), true);
+eq('探测并发提到 6（慢镜像不再逐个排队）', (() => {
+  const bg = readFileSync(join(ROOT, 'background.js'), 'utf8');
+  return /const PROBE_CONCURRENCY = 6/.test(bg) && /runProbe\(targets, PROBE_CONCURRENCY\)/.test(bg);
+})(), true);
+ok('镜像表写入已串行化（mutateMirrors 存在且探测收尾不再整表覆盖）', (() => {
+  const bg = readFileSync(join(ROOT, 'background.js'), 'utf8');
+  return /function mutateMirrors\(/.test(bg) && /mutateMirrors\(latest => latest\.map/.test(bg);
+})());
 
 /* -------------------------------- 汇总 -------------------------------- */
 
