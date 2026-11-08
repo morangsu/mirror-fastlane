@@ -2,8 +2,8 @@ name: refresh mirror list
 
 # 数据源 git.mxg.pub 的响应带 Cache-Control: max-age=86400（约日更），
 # 所以按它的频率每天同步一次即可；内容无变化时不提交，避免无意义改动。
-# 写入规则见 tools/refresh-mirrors.mjs：手工精选（无 auto 字段）永不删，
-# auto:true 的条目源不再给出时从文件移除（扩展侧据此在 24h 后真正删除）。
+# 写入规则见 tools/refresh-mirrors.mjs：精选（无 auto 字段）打头且永不删，
+# 其余整段按源当前 success 覆盖（新地址顶掉旧地址，旧地址不在 success 里就消失）。
 "on":
   schedule:
     - cron: '17 3 * * *'      # 每天 03:17 UTC（北京时间 11:17）
@@ -19,16 +19,18 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 10       # 拉源 20s 超时 + 推送，正常几秒；给个上限防挂死
     steps:
-      - uses: actions/checkout@v4
+      # v5 起的官方 action 跑在 Node 24；v4 用的 Node 20 已被 GitHub 弃用
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0          # push 前可能需要 rebase，完整历史更稳
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
-      - name: 刷新清单（合并写入，源为空则失败且不覆盖）
+      - name: 刷新清单（整段覆盖写入，源为空则失败且不覆盖）
         run: node tools/refresh-mirrors.mjs
 
       - name: 有变化才提交
