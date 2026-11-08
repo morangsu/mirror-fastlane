@@ -27,6 +27,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SRC = process.env.MFL_MIRROR_SOURCE || 'https://git.mxg.pub/api/github/list';
 const MAX_MIRRORS = 60;   // 与扩展存在集合上限一致
+const FETCH_TRIES = 3;    // 源站偶发很慢：单次跑红叉会白等一天，改成重试
+const FETCH_TIMEOUT_MS = 30000;
 const FROM_IDX = process.argv.indexOf('--from');
 const FROM = FROM_IDX >= 0 ? process.argv[FROM_IDX + 1] : null;   // 离线：--from <本地json>
 const OUT_IDX = process.argv.indexOf('--out');
@@ -46,6 +48,29 @@ function isSuccess(s) {
   return v === '' || v === 'success' || v === 'ok' || v === '200' || v === 'true';
 }
 
+/** 拉源：超时/5xx 都重试。返回解析后的 JSON；全部失败才抛错（→ 不覆盖清单） */
+async function fetchSource(url) {
+  let lastErr;
+  for (let i = 1; i <= FETCH_TRIES; i++) {
+    try {
+      const res = await fetch(url, {
+        headers: { accept: 'application/json', 'user-agent': 'mirror-fastlane-refresh' },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error('源返回 HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+      const why = (e && e.name === 'TimeoutError') ? `超时 ${FETCH_TIMEOUT_MS / 1000}s`
+        : (e && e.name === 'SyntaxError') ? '返回的不是 JSON'
+          : (e && e.message) || String(e);
+      console.error(`  第 ${i}/${FETCH_TRIES} 次拉取失败：${why}`);
+      if (i < FETCH_TRIES) await new Promise(r => setTimeout(r, 2000 * i));   // 2s、4s 退避
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   const dry = process.argv.includes('--dry');
   const replace = process.argv.includes('--replace');
@@ -54,17 +79,9 @@ async function main() {
   if (OUT_IDX >= 0 && !OUT) throw new Error('--out 后面要跟输出文件路径');
 
   /* ---------------------------- 1. 取源数据 ---------------------------- */
-  let data;
-  if (FROM) {
-    data = JSON.parse(fs.readFileSync(path.resolve(ROOT, FROM), 'utf8'));
-  } else {
-    const res = await fetch(SRC, {
-      headers: { accept: 'application/json', 'user-agent': 'mirror-fastlane-refresh' },
-      signal: AbortSignal.timeout(20000),
-    });
-    if (!res.ok) throw new Error('源返回 HTTP ' + res.status);
-    data = await res.json();
-  }
+  const data = FROM
+    ? JSON.parse(fs.readFileSync(path.resolve(ROOT, FROM), 'utf8'))
+    : await fetchSource(SRC);
 
   const success = [];
   const srcHosts = new Set();
