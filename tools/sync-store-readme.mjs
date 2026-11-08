@@ -34,14 +34,20 @@ for (const p of info.packages) {
     process.exit(1);
   }
   const before = lines[idx];
-  const after = before
-    .replace(/[\d,]+ B(?=，SHA-256)/, bytes)
-    .replace(/(SHA-256 `)[0-9a-f]{8}(…`)/, '$1' + sha8 + '$2');
-  if (after === before) {
+  // 必须能匹配到「体积 + 前 8 位哈希」才动手；匹配不到说明 README 格式被改坏了，应报错
+  const RE = /[\d,]+ B，SHA-256 `[0-9a-f]{8}…`/;
+  if (!RE.test(before)) {
     console.error('[sync] ' + p.file + ' 这一行没匹配到「体积 / 哈希」格式');
     process.exit(1);
   }
-  if (after !== lines[idx]) { lines[idx] = after; changed++; }
+  const after = before.replace(RE, bytes + ' B，SHA-256 `' + sha8 + '…`');
+  // 值已经一致是正常情况（重复跑 pack/sync），不是错误
+  if (after === before) {
+    console.log('  ' + p.file + ' 已是最新（' + bytes + ' ' + sha8 + '…）');
+  } else {
+    lines[idx] = after;
+    changed++;
+  }
   console.log('  ' + p.file + ' → ' + bytes + '  ' + sha8 + '…');
 }
 
