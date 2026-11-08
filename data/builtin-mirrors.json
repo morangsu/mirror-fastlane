@@ -1,16 +1,87 @@
 {
-  "updated": "2026-11-06",
-  "note": "初始镜像清单，按 2026-11-06 实测单线程速度排序。启动后会被探测结果覆盖排序。",
+  "updated": "2026-11-08",
+  "note": "手工精选（无 auto 字段）永不删；其余条目整段由 git.mxg.pub 的当前 success 覆盖（auto:true），源撤下即消失。",
   "mirrors": [
-    { "name": "DPIK",        "base": "https://gh.dpik.top",      "seedKbps": 208 },
-    { "name": "Glowp",       "base": "https://hub.glowp.xyz",    "seedKbps": 163 },
-    { "name": "GHFast",      "base": "https://ghfast.top",       "seedKbps": 199, "note": "5 路并发上限，IDM 建议 4 连接" },
-    { "name": "GH-Proxy CDN","base": "https://cdn.gh-proxy.org", "seedKbps": 180 },
-    { "name": "GH-Proxy",    "base": "https://gh-proxy.org",     "seedKbps": 178 },
-    { "name": "SixYin",      "base": "https://gh.sixyin.com",    "seedKbps": 159 },
-    { "name": "Monlor",      "base": "https://gh.monlor.com",    "seedKbps": 145 },
-    { "name": "Noki",        "base": "https://gh.noki.icu",      "seedKbps": 122 },
-    { "name": "Xi-Xu",       "base": "https://xget.xi-xu.me",    "seedKbps": 90 },
-    { "name": "GH-Proxy.com","base": "https://gh-proxy.com",     "seedKbps": 89 }
+    {
+      "name": "DPIK",
+      "base": "https://gh.dpik.top",
+      "seedKbps": 208
+    },
+    {
+      "name": "Glowp",
+      "base": "https://hub.glowp.xyz",
+      "seedKbps": 163
+    },
+    {
+      "name": "GHFast",
+      "base": "https://ghfast.top",
+      "seedKbps": 199,
+      "note": "5 路并发上限，IDM 建议 4 连接"
+    },
+    {
+      "name": "GH-Proxy CDN",
+      "base": "https://cdn.gh-proxy.org",
+      "seedKbps": 180
+    },
+    {
+      "name": "GH-Proxy",
+      "base": "https://gh-proxy.org",
+      "seedKbps": 178
+    },
+    {
+      "name": "SixYin",
+      "base": "https://gh.sixyin.com",
+      "seedKbps": 159
+    },
+    {
+      "name": "Monlor",
+      "base": "https://gh.monlor.com",
+      "seedKbps": 145
+    },
+    {
+      "name": "Noki",
+      "base": "https://gh.noki.icu",
+      "seedKbps": 122
+    },
+    {
+      "name": "Xi-Xu",
+      "base": "https://xget.xi-xu.me",
+      "seedKbps": 90
+    },
+    {
+      "name": "GH-Proxy.com",
+      "base": "https://gh-proxy.com",
+      "seedKbps": 89
+    },
+    {
+      "name": "yylx.win",
+      "base": "https://git.yylx.win",
+      "auto": true
+    },
+    {
+      "name": "tvv.tw",
+      "base": "https://tvv.tw",
+      "auto": true
+    },
+    {
+      "name": "gh-proxy.net",
+      "base": "https://gh-proxy.net",
+      "auto": true
+    },
+    {
+      "name": "fastgit.cc",
+      "base": "https://fastgit.cc",
+      "auto": true
+    },
+    {
+      "name": "blfrp.cn",
+      "base": "https://g.blfrp.cn",
+      "auto": true
+    },
+    {
+      "name": "monkeyray.net",
+      "base": "https://ghproxy.monkeyray.net",
+      "auto": true
+    }
   ]
 }
