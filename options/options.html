@@ -178,6 +178,10 @@
       <input type="checkbox" id="remoteEnabled">
     </div>
     <div class="row">
+      <div class="k"><b>允许删除镜像</b><small>远程清单里连续 24 小时取不到的「远程加入」镜像会被自动移除。内置与手动添加的永不删除。</small></div>
+      <input type="checkbox" id="remoteAllowDelete">
+    </div>
+    <div class="row">
       <div class="k"><b>清单地址</b><small>JSON 格式，可用 <code>{"mirrors":[{"name":"x","base":"https://x"}]}</code> 或字符串数组</small></div>
       <input type="text" id="remoteUrl" placeholder="https://raw.githubusercontent.com/.../mirrors.json" style="max-width:420px">
     </div>

@@ -146,7 +146,7 @@ const srcPrefix = `mirror-fastlane-source-${VERSION}`;
 const exclude = full => {
   const rel = full.startsWith(srcPrefix + '/') ? full.slice(srcPrefix.length + 1) : full;
   return /^dist\//.test(rel) || /^node_modules\//.test(rel) || /^\.git\//.test(rel) ||
-    /^store\//.test(rel) || /^test\/probe-/.test(rel) ||
+    /^store\//.test(rel) || /^archive\//.test(rel) || /^docs\//.test(rel) || /^test\/probe-/.test(rel) ||
     /^test\/fs-capability\.mjs$/.test(rel) ||
     /\.zip$/.test(rel) || /\.log$/.test(rel) ||
     /(^|\/)auth\.txt$/.test(rel) || /(^|\/)outbox\.txt$/.test(rel) ||

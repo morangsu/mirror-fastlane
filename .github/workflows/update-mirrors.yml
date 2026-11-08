@@ -1,0 +1,45 @@
+name: refresh mirror list
+
+# 数据源 git.mxg.pub 的响应带 Cache-Control: max-age=86400（约日更），
+# 所以按它的频率每天同步一次即可；内容无变化时不提交，避免无意义改动。
+# 写入规则见 tools/refresh-mirrors.mjs：手工精选（无 auto 字段）永不删，
+# auto:true 的条目源不再给出时从文件移除（扩展侧据此在 24h 后真正删除）。
+"on":
+  schedule:
+    - cron: '17 3 * * *'      # 每天 03:17 UTC（北京时间 11:17）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write             # 需要往 main 提交 data/builtin-mirrors.json
+
+concurrency:
+  group: refresh-mirror-list
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # push 前可能需要 rebase，完整历史更稳
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 刷新清单（合并写入，源为空则失败且不覆盖）
+        run: node tools/refresh-mirrors.mjs
+
+      - name: 有变化才提交
+        run: |
+          if git diff --quiet -- data/builtin-mirrors.json; then
+            echo "清单无变化，跳过提交"
+            exit 0
+          fi
+          git config user.name  "mirror-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/builtin-mirrors.json
+          git commit -m "chore(mirrors): auto refresh [skip ci]"
+          # 期间若有人推过 main，先 rebase 再推，避免非快进被拒
+          git push origin HEAD || { git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push origin HEAD; }

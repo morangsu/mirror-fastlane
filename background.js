@@ -15,6 +15,8 @@ const K = {
   lastProbe: 'lastProbe',
   lastOnDemand: 'lastOnDemand',
   listFetched: 'listFetched',
+  listAttempt: 'listAttempt',
+  listMissing: 'listMissing',
   intents: 'dlIntents',
   hashSeen: 'hashSeen',
   hashResults: 'hashResults',
@@ -28,6 +30,8 @@ const ALARM_PROBE = 'mfl-probe';
 const ALARM_TICK = 'mfl-tick';
 const ALARM_LIST = 'mfl-list';
 const LIST_REFRESH_MS = 24 * 3600 * 1000;   // 远程清单超过这个时间没取到过就自动拉一次
+const LIST_RETRY_MS = 30 * 60 * 1000;       // 失败后的最小重试间隔：避免每次 SW 唤醒都重打一遍候选源
+const LIST_DELETE_MS = 24 * 3600 * 1000;    // 镜像连续缺失超过这个时间才从列表移除（抗抖动）
 
 /* ---------------------------------- 存储 ---------------------------------- */
 
@@ -255,6 +259,14 @@ async function probeAll(reason) {
 
 /* --------------------------------- 远程清单 -------------------------------- */
 
+/** 从远程 JSON 里取镜像数组；形状不认识就返回 null（绝不悄悄折成空数组） */
+function pickIncoming(data) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return null;
+  if (Array.isArray(data.mirrors)) return data.mirrors;
+  return null;
+}
+
 async function fetchRemoteList() {
   const settings = await getSettings();
   const cfg = settings.remoteList || {};
@@ -263,6 +275,8 @@ async function fetchRemoteList() {
   // 地址留空就用默认（仓库里的 mirrors.json），不用手填
   const rawUrl = String(cfg.url || MFL.DEFAULT_SETTINGS.remoteList.url).trim();
   if (!rawUrl) return { ok: false, reason: 'no-url' };
+  // 记「尝试时间」：失败也要记，否则每次 SW 唤醒都会重新串行重试所有候选源
+  await ext.storage.local.set({ [K.listAttempt]: Date.now() });
   dbg('list', '开始获取远程清单', { url: rawUrl, enabled: cfg.enabled });
 
   const mirrors = await getMirrors();
@@ -282,13 +296,20 @@ async function fetchRemoteList() {
         continue;
       }
       const data = await res.json();
-      const added = await mergeRemoteList(data);
+      const r = await applyRemoteList(data);
+      if (r.skipped === 'bad-shape') {
+        // 形状不认识（比如把 git.mxg.pub 的 {data:[...]} 直接填成清单地址）：
+        // 当作这次来源失败，换下一个候选，绝不按「空清单」去删镜像
+        tried.push({ via: c.via, err: '清单格式无法识别' });
+        dbg('list', '清单格式无法识别', { via: c.via, url: c.url });
+        continue;
+      }
       await ext.storage.local.set({
-        [K.listFetched]: { at: Date.now(), via: c.via, added, ok: true },
+        [K.listFetched]: { at: Date.now(), via: c.via, added: r.added, removed: r.removed, ok: true },
       });
       await applyRules();
-      dbg('list', '清单获取成功', { via: c.via, added });
-      return { ok: true, via: c.via, added };
+      dbg('list', '清单获取成功', { via: c.via, added: r.added, removed: r.removed });
+      return { ok: true, via: c.via, added: r.added, removed: r.removed };
     } catch (e) {
       // 把每个来源的失败原因带回去，界面才能说清是哪一步挂了
       const why = (e && e.name === 'TimeoutError') ? '超时'
@@ -303,47 +324,54 @@ async function fetchRemoteList() {
   return { ok: false, reason: 'all-failed', tried };
 }
 
-/** 到期才刷新远程清单：距上次成功获取超过 24h 才真的去拉 */
+/** 到期才刷新远程清单：距上次成功获取超过 24h 才真的去拉；失败后至少等 30min 再重试 */
 async function maybeRefreshList(force) {
   const settings = await getSettings();
   const cfg = settings.remoteList || {};
   const url = String(cfg.url || MFL.DEFAULT_SETTINGS.remoteList.url).trim();
   if (!cfg.enabled || !url) return { ok: false, skipped: 'disabled' };
 
-  const o = await ext.storage.local.get(K.listFetched);
-  const last = (o[K.listFetched] && o[K.listFetched].at) || 0;
+  const o = await ext.storage.local.get([K.listFetched, K.listAttempt]);
+  const lf = o[K.listFetched];
+  const last = (lf && lf.ok ? lf.at : 0) || 0;   // 只认「成功」的时间：失败不压制重试
   if (!force && Date.now() - last < LIST_REFRESH_MS) {
     dbg('list', '周期巡检：清单仍是新的，跳过', { 距今小时: Math.round((Date.now() - last) / 3600000) });
     return { ok: false, skipped: 'fresh' };
   }
+  // 失败退避：bootstrap 在每次 SW 唤醒都会跑一遍，没有这个间隔就会一直串行重试所有候选源
+  const lastTry = o[K.listAttempt] || 0;
+  if (!force && lastTry && Date.now() - lastTry < LIST_RETRY_MS) {
+    dbg('list', '周期巡检：距上次尝试不足 30min，退避中');
+    return { ok: false, skipped: 'backoff' };
+  }
 
-  return fetchRemoteList();
+  return runListFetch();
 }
 
-async function mergeRemoteList(data) {  const incoming = Array.isArray(data) ? data : (data && data.mirrors) || [];
+/** 同一时刻只允许一次清单拉取（bootstrap / 定时器 / 手动点击可能撞在一起） */
+let listInFlight = null;
+function runListFetch() {
+  if (listInFlight) return listInFlight;
+  listInFlight = fetchRemoteList().finally(() => { listInFlight = null; });
+  return listInFlight;
+}
+
+/** 应用远程清单：增 + 删（24h 迟滞，避免偶发抖动误删） */
+async function applyRemoteList(data) {
+  const incoming = pickIncoming(data);
+  // 形状不认识 → 明确报错，让上层换下一个候选源；不能折成空数组（那会触发 24h 删除）
+  if (!incoming) return { added: 0, removed: 0, skipped: 'bad-shape' };
+  const settings = await getSettings();
+  const rl = settings.remoteList || {};
   const cur = await getMirrors();
-  const known = new Set(cur.map(m => MFL.hostOf(m.base)));
-  let added = 0;
-  incoming.slice(0, 60).forEach(item => {
-    const base = MFL.normalizeBase(typeof item === 'string' ? item : item.base);
-    if (!base || known.has(MFL.hostOf(base))) return;
-    known.add(MFL.hostOf(base));
-    cur.push({
-      id: MFL.idFromBase(base),
-      name: (item && item.name) || MFL.hostOf(base),
-      base,
-      enabled: true,
-      source: 'remote',
-      note: (item && item.note) || '',
-      healthy: true,
-      permitted: false,
-      stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '未授权' },
-      score: 0,
-    });
-    added++;
-  });
-  if (added) await setMirrors(cur);
-  return added;
+  const o = await ext.storage.local.get(K.listMissing);
+  const res = MFL.syncMirrors(cur, incoming, {
+    allowDelete: rl.allowDelete !== false,
+    deleteAfterMs: LIST_DELETE_MS,
+  }, Date.now(), o[K.listMissing] || {});
+  if (res.added || res.removed) await setMirrors(res.list);
+  await ext.storage.local.set({ [K.listMissing]: res.missing });
+  return { added: res.added, removed: res.removed };
 }
 
 /* ------------------------------- 权限同步 ------------------------------- */
@@ -528,8 +556,8 @@ async function syncAlarms() {
   const tick = await ext.alarms.get(ALARM_TICK);
   if (!tick) await ext.alarms.create(ALARM_TICK, { periodInMinutes: 5 });
 
-  // 远程清单：开启且填了地址才排期，每 12 小时探一次；真正的刷新由下面的 24h 闸门决定
-  const wantList = !!(settings.remoteList && settings.remoteList.enabled && settings.remoteList.url);
+  // 远程清单：开启就排期（地址留空会回落到默认地址），每 12 小时探一次；真正的刷新由 24h 闸门决定
+  const wantList = !!(settings.remoteList && settings.remoteList.enabled);
   const curList = await ext.alarms.get(ALARM_LIST);
   if (!wantList) {
     if (curList) await ext.alarms.clear(ALARM_LIST);
@@ -571,14 +599,29 @@ const handlers = {
   'get-state': () => getState(),
 
   'save-settings': async msg => {
+    const prev = await getSettings();
     const next = await setSettings(msg.patch || {});
+    // 启用远程清单时，「允许删除镜像」默认打开（显式 false 才关）
+    if (next.remoteList && next.remoteList.enabled && next.remoteList.allowDelete === undefined) {
+      next.remoteList.allowDelete = true;
+      await setSettings({ remoteList: next.remoteList });
+    }
+    // 换清单地址 / 关掉远程清单：把「缺失计时」和上次获取记录一起清掉，
+    // 否则新清单的第一轮会被上一份清单留下的缺失记录连累，提前被判「已连续缺失」
+    const prevUrl = String((prev.remoteList && prev.remoteList.url) || '');
+    const nextUrl = String((next.remoteList && next.remoteList.url) || '');
+    const turnedOff = !(next.remoteList && next.remoteList.enabled);
+    if (prevUrl !== nextUrl || turnedOff) {
+      await ext.storage.local.remove([K.listMissing, K.listFetched, K.listAttempt]);
+      dbg('list', '清单配置变化，已重置缺失计时与获取记录', { prevUrl, nextUrl, turnedOff });
+    }
     await syncAlarms();
     await applyRules();
     // 只在用户真的改了远程清单配置时顺带拉一次。以前只要改 token / 任意开关
     // 都会触发网络请求，容易出现莫名其妙的「获取失败」。
     if (msg.patch && msg.patch.remoteList && next.remoteList && next.remoteList.enabled) {
       dbg('list', '远程清单配置变更，顺带拉一次');
-      fetchRemoteList().catch(() => {});
+      maybeRefreshList(false).catch(() => {});
     }
     return { settings: next };
   },
@@ -606,8 +649,23 @@ const handlers = {
   },
 
   'remove-mirror': async msg => {
-    const list = (await getMirrors()).filter(m => m.id !== msg.id);
-    await setMirrors(list);
+    const list = await getMirrors();
+    // 优先按 base 精确匹配（id 由 host 派生，a-b.com 与 a.b.com 会撞车）；否则按 id 只删第一条
+    let idx = msg.base ? list.findIndex(m => MFL.normalizeBase(m.base) === MFL.normalizeBase(msg.base)) : -1;
+    if (idx < 0) idx = list.findIndex(m => m.id === msg.id);
+    if (idx >= 0) {
+      const h = MFL.hostOf(list[idx].base);
+      list.splice(idx, 1);
+      await setMirrors(list);
+      // 顺手清掉这个 host 的缺失计时，避免 storage 里留无主记录
+      if (h) {
+        const o = await ext.storage.local.get(K.listMissing);
+        const miss = o[K.listMissing] || {};
+        if (miss[h]) { delete miss[h]; await ext.storage.local.set({ [K.listMissing]: miss }); }
+      }
+    } else {
+      await setMirrors(list);
+    }
     await applyRules();
     return { ok: true, state: await getState() };
   },
@@ -658,7 +716,7 @@ const handlers = {
 
   'apply': async () => ({ ok: true, rules: await applyRules() }),
   'refresh-permissions': async () => { await refreshPermissions(); await applyRules(); return { ok: true, state: await getState() }; },
-  'fetch-list': async () => fetchRemoteList(),
+  'fetch-list': async () => runListFetch(),
   'sync-alarms': async () => { await syncAlarms(); return { ok: true }; },
 
   'badge-info': async () => {

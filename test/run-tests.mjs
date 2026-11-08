@@ -487,6 +487,106 @@ eq('清单支持星号前缀', GHH.parseChecksumText(H1 + ' *c.zip', 'c.zip'), H
 eq('清单不匹配返回 null', GHH.parseChecksumText(H1 + '  a.zip', 'zzz.zip'), null);
 eq('空文本返回 null', GHH.parseChecksumText('', 'a.zip'), null);
 
+group('8.7 镜像清单同步（增删 + 24h 迟滞）');
+(() => {
+  const H = 3600 * 1000;
+  const t0 = 1000;
+  const mk = (base, source) => ({
+    id: MFL.idFromBase(base), name: base, base, source,
+    enabled: true, healthy: true,
+    stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' }, score: 0,
+  });
+  const cur = [mk('https://a.example', 'builtin'), mk('https://b.example', 'user'),
+    mk('https://c.example', 'remote'), mk('https://d.example', 'remote')];
+  const inA = [{ name: 'A', base: 'https://a.example' }, { name: 'C', base: 'https://c.example' }];
+  // 「某镜像缺失」要用「清单里还有别的、就是没有它」来表达；
+  // 注意不能用 incoming=[]，那是「空清单」的语义，现在会被保护（见下面的用例）
+  const OTHER = [{ name: 'O', base: 'https://other.example' }];
+
+  let r = MFL.syncMirrors(cur, inA, { allowDelete: true }, t0, {});
+  eq('同步：已有项不重复新增', r.added, 0);
+  eq('同步：首次缺失不删', r.removed, 0);
+  ok('同步：记录首次缺失时间', r.missing && r.missing['d.example'] && r.missing['d.example'].since === t0);
+  ok('同步：手动添加(user)受保护仍在', r.list.some(m => m.base.includes('b.example')));
+
+  let r2 = MFL.syncMirrors(r.list, inA, { allowDelete: true }, t0 + 23 * H, r.missing);
+  eq('同步：未满 24h 不删', r2.removed, 0);
+
+  let r3 = MFL.syncMirrors(r2.list, inA, { allowDelete: true }, t0 + 24 * H, r2.missing);
+  eq('同步：满 24h 删 1 个', r3.removed, 1);
+  ok('同步：被删的是长期缺失项', !r3.list.some(m => m.base.includes('d.example')));
+
+  // 离线超过 48h 再回来：不应把「墙钟间隔」当成连续缺失而误删，应重新计时
+  let ro = MFL.syncMirrors([mk('https://d.example', 'remote')], OTHER, { allowDelete: true }, t0 + 72 * H, { 'd.example': { since: t0, last: t0 } });
+  eq('离线超过48h：不删除', ro.removed, 0);
+  ok('离线回来：重新计时', ro.missing['d.example'] && ro.missing['d.example'].since === t0 + 72 * H);
+  let ro2 = MFL.syncMirrors(ro.list, OTHER, { allowDelete: true }, t0 + 96 * H, ro.missing);
+  eq('重新计时后再连续缺失24h才删', ro2.removed, 1);
+
+  let r4 = MFL.syncMirrors(cur, inA, { allowDelete: false }, t0 + 24 * H, { 'd.example': t0 });
+  eq('关闭删除：不删任何', r4.removed, 0);
+  ok('关闭删除：缺失项仍保留', r4.list.some(m => m.base.includes('d.example')));
+
+  let r5 = MFL.syncMirrors(cur, [{ base: 'https://b.example' }, { base: 'https://c.example' }],
+    { allowDelete: true }, t0 + 24 * H, { 'a.example': t0, 'd.example': t0 });
+  ok('内置受保护：不因缺失删除', r5.list.some(m => m.base.includes('a.example')));
+  ok('远程可删：远程照删', !r5.list.some(m => m.base.includes('d.example')));
+  eq('远程删 1 个', r5.removed, 1);
+
+  let r6 = MFL.syncMirrors(cur, [{ base: 'https://new.example' }], { allowDelete: false }, t0, {});
+  eq('新增：新 host 计 1', r6.added, 1);
+  ok('新增：已加入列表', r6.list.some(m => m.base.includes('new.example')));
+
+  let r7 = MFL.syncMirrors([mk('https://d.example', 'remote')], [{ base: 'https://d.example' }], { allowDelete: true }, t0 + 5 * H, { 'd.example': t0 });
+  ok('重新出现：清除缺失记录', !r7.missing['d.example']);
+
+  // 内置(builtin)永不因缺失删除
+  let rb = MFL.syncMirrors([mk('https://b1.example', 'builtin')], OTHER, { allowDelete: true }, t0 + 24 * H, { 'b1.example': { since: t0, last: t0 } });
+  eq('内置：缺失超24h也不删', rb.removed, 0);
+  ok('内置：仍保留', rb.list.some(m => m.base.includes('b1.example')));
+
+  // 内置即使曾被源列出、随后消失，也永不因缺失删除
+  let s1 = MFL.syncMirrors([mk('https://b2.example', 'builtin')], [{ base: 'https://b2.example' }], { allowDelete: true }, t0, {});
+  let s2 = MFL.syncMirrors(s1.list, OTHER, { allowDelete: true }, t0 + 24 * H, s1.missing);
+  eq('内置：曾被源列出后消失也不删', s2.removed, 0);
+
+  // 超过 maxAdd 的条目仍算「存在」（存在集合不截断），不误删
+  const many = Array.from({ length: 70 }, (_, i) => ({ base: 'https://m' + i + '.example' }));
+  let rt = MFL.syncMirrors([mk('https://m65.example', 'remote')], many, { allowDelete: true, maxAdd: 60 }, t0 + 24 * H, { 'm65.example': { since: t0, last: t0 } });
+  ok('超 maxAdd 的也存在集合里（不误删）', rt.list.some(m => m.base.includes('m65.example')));
+  eq('超限不删', rt.removed, 0);
+
+  // 空清单 = 坏响应/形状不认识，绝不能被当成「所有镜像都缺失」
+  let rz = MFL.syncMirrors([mk('https://d.example', 'remote')], [], { allowDelete: true }, t0 + 24 * H, { 'd.example': { since: t0, last: t0 } });
+  eq('空清单：不删任何镜像', rz.removed, 0);
+  ok('空清单：镜像仍在', rz.list.some(m => m.base.includes('d.example')));
+  eq('空清单：缺失记录被清空', Object.keys(rz.missing).length, 0);
+
+  // source 缺字段时按「受保护」处理（删除不可逆，默认值必须偏保守）
+  let rn = MFL.syncMirrors([{ id: 'x', name: 'x', base: 'https://nosrc.example', enabled: true, healthy: true }],
+    OTHER, { allowDelete: true }, t0 + 24 * H, { 'nosrc.example': { since: t0, last: t0 } });
+  eq('source 缺失：不删', rn.removed, 0);
+  ok('source 缺失：仍保留', rn.list.some(m => m.base.includes('nosrc.example')));
+
+  // 时钟被改到未来后又改回来：不能让该 host 永久删不掉
+  let rc = MFL.syncMirrors([mk('https://d.example', 'remote')], OTHER, { allowDelete: true }, t0,
+    { 'd.example': { since: t0 + 100 * H, last: t0 + 100 * H } });
+  eq('记录来自未来：不删', rc.removed, 0);
+  eq('记录来自未来：重新计时', rc.missing['d.example'].since, t0);
+
+  // maxAdd 按「真正新增的条数」截断：前 60 条都已存在时，第 61 条新项仍要能加进来
+  const known = Array.from({ length: 60 }, (_, i) => mk('https://k' + i + '.example', 'remote'));
+  const inKnown = known.map(m => ({ base: m.base })).concat([{ base: 'https://brand-new.example' }]);
+  let ra = MFL.syncMirrors(known, inKnown, { allowDelete: true, maxAdd: 60 }, t0, {});
+  eq('maxAdd：前缀全已知时仍能加新项', ra.added, 1);
+  ok('maxAdd：新项已加入', ra.list.some(m => m.base.includes('brand-new.example')));
+
+  // 已不存在的 host 的缺失记录要被清掉，不能无限残留
+  let rp = MFL.syncMirrors([mk('https://a.example', 'builtin')], OTHER, { allowDelete: true }, t0,
+    { 'gone.example': { since: 1, last: 1 } });
+  ok('无主缺失记录被清理', !rp.missing['gone.example']);
+})();
+
 group('12. 构建产物');
 const edgeMf = join(ROOT, 'dist/edge/manifest.json');
 const ffMf = join(ROOT, 'dist/firefox/manifest.json');

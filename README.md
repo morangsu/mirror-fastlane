@@ -55,6 +55,26 @@ node build.mjs          # 产出 dist/edge、dist/firefox、dist/debug（debug �
 
 远程 JSON 只当数据解析，字段白名单校验（只接受 https），**不会执行任何远程代码**。
 
+### 清单会自动更新
+
+`data/builtin-mirrors.json` 由 GitHub Actions 每天按 `git.mxg.pub` 的成功列表更新（见
+`.github/workflows/update-mirrors.yml` + `tools/refresh-mirrors.mjs`）。规则是 **「手工精选 ∪ 源当前 success」**：
+
+- **没有 `auto` 字段**的条目是手工精选（那 10 个实测较快的镜像），脚本**永不删**；
+- 其余部分**整段按源当前的 success 覆盖**（顺序与地址都跟源走）：新地址直接顶掉旧地址，旧地址只要不在这次 success 里就消失，条目用 `auto: true` 标出——这正是扩展侧「连续 24h 缺失才移除」的输入；
+- 源解析后为空或全部失败时，脚本**直接报错退出**，不覆盖文件。
+
+为什么不整份替换：源的可用集与本项目自测的内置集几乎不重叠，整份替换会冲掉实测更快的镜像。
+
+### 列表会自己增删吗
+
+开了远程清单后，设置页有「允许删除镜像」开关（默认开）：
+
+- **远程清单加进来的镜像**：连续 24 小时不在成功列表里才移除（相邻两次观测间隔超过 48 小时视为离线，重新计时，不误删）；
+- **内置镜像**：永不因缺失删除——源没测它不等于它挂了，只会被扩展自身探测降权、不再被选中；
+- **手动添加的镜像**：永不自动删除；
+- **抓取失败 / 清单格式不认识 / 清单为空**：这一轮不做缺失判定，一个镜像都不会删（只有在拿到一份非空且能识别的清单时才会累计缺失时间）。
+
 ### 规则怎么生成
 
 DNR 里**一个请求只会命中一条规则**，规则之间不存在"这个失败了再试下一个"的链式回退。
@@ -368,9 +388,10 @@ npm run check:idm
 
 ```bash
 npm test                       # 全套（build + 以下 7 组）
-node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（185 项）
+node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（218 项）
 node test/debug-log-test.mjs   # 调试日志并发写入与脱敏（4 项）
 node test/content-state-test.mjs # 内容脚本状态刷新（7 项）
+node test/refresh-mirrors-test.mjs # 清单刷新脚本：精选保留 / 整段覆盖 / 空源拒绝（30 项）
 node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（27 项）
 node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（8 项）
 node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（18 项）
@@ -378,7 +399,7 @@ node test/run-ps-tests.mjs     # 脚本逻辑（79 项断言，自动找 pwsh / 
 npx --yes web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检查
 ```
 
-单元测试 185 项、脚本测试 79 项，其余 64 项（debug 日志 4 + 内容脚本 7 + 冒烟 27 + 改写 8 + 任务文件 18），合计 **328 项**。
+单元测试 218 项、脚本测试 79 项，其余 94 项（debug 日志 4 + 内容脚本 7 + 清单刷新 30 + 冒烟 27 + 改写 8 + 任务文件 18），合计 **391 项**。
 
 `test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完全部用例：
 
@@ -408,8 +429,8 @@ npm run store       # build + logo + 截图 + 打包，一步生成 store/packag
 npm run pack        # 只重新打包（不重拍截图）
 
 # 也可手工打包（不依赖脚本自带的 zip 实现）：
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.5.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.5.zip -Force
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.6.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.6.zip -Force
 ```
 
 `hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，

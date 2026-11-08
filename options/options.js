@@ -191,6 +191,7 @@ function render() {
   $('remoteEnabled').checked = !!(s.remoteList && s.remoteList.enabled);
   // 留空就显示内置默认地址，用户不改也能直接用
   $('remoteUrl').value = (s.remoteList && s.remoteList.url) || MFL.DEFAULT_SETTINGS.remoteList.url;
+  $('remoteAllowDelete').checked = !(s.remoteList && s.remoteList.allowDelete === false);
   $('hashEnabled').checked = !!(s.hash && s.hash.enabled);
   $('hashAuto').checked = !!(s.hash && s.hash.auto);
   $('token').value = s.token || '';
@@ -210,7 +211,10 @@ function render() {
 
   const lf = state.listFetched;
   $('remoteInfo').textContent = lf
-    ? (lf.ok ? MFL.relativeTime(lf.at) + '，经 ' + (lf.via || '直连') + '，新增 ' + lf.added + ' 个' : MFL.relativeTime(lf.at) + '，全部失败')
+    ? (lf.ok
+      ? MFL.relativeTime(lf.at) + '，经 ' + (lf.via || '直连') + '，新增 ' + (lf.added || 0) + ' 个'
+        + (lf.removed ? '，移除 ' + lf.removed + ' 个' : '')
+      : MFL.relativeTime(lf.at) + '，全部失败')
     : '从未';
 
   $('diag').textContent = '探测模式 ' + (s.probeMode === 'interval' ? '定时/' + s.probeIntervalMin + ' 分钟' : '仅按需') +
@@ -245,7 +249,7 @@ $('mirrorBody').addEventListener('click', async ev => {
   if (act === 'remove') {
     const m = state.mirrors.find(x => x.id === id);
     if (!m || !confirm('删除镜像 ' + m.name + '？')) return;
-    await send('remove-mirror', { id });
+    await send('remove-mirror', { id, base: m.base });
     return;
   }
 
@@ -409,7 +413,14 @@ $('probeInterval').addEventListener('change', async e => {
 });
 
 $('remoteEnabled').addEventListener('change', async e => {
-  await send('save-settings', { patch: { remoteList: Object.assign({}, state.settings.remoteList, { enabled: e.target.checked }) } });
+  const cur = Object.assign({}, state.settings.remoteList);
+  cur.enabled = e.target.checked;
+  if (e.target.checked && cur.allowDelete === undefined) cur.allowDelete = true;   // 首次启用默认开
+  await send('save-settings', { patch: { remoteList: cur } });
+});
+
+$('remoteAllowDelete').addEventListener('change', async e => {
+  await send('save-settings', { patch: { remoteList: Object.assign({}, state.settings.remoteList, { allowDelete: e.target.checked }) } });
 });
 
 $('remoteUrl').addEventListener('change', async e => {
@@ -441,9 +452,10 @@ $('fetchList').addEventListener('click', async () => {
     'no-url': '清单地址为空',
     'all-failed': '所有来源都失败',
     disabled: '未启用远程清单',
+    'bad-shape': '清单格式无法识别（应为 {"mirrors":[{"name":"x","base":"https://x"}]}）',
   };
   if (r && r.ok) {
-    toast('已通过 ' + r.via + ' 获取，新增 ' + r.added + ' 个');
+    toast('已通过 ' + r.via + ' 获取，新增 ' + (r.added || 0) + ' 个' + (r.removed ? '，移除 ' + r.removed + ' 个' : ''));
   } else {
     let msg = REASON[r && r.reason] || (r && r.reason) || '未知';
     if (r && Array.isArray(r.tried) && r.tried.length) {
@@ -537,7 +549,7 @@ if (typeof DBG !== 'undefined' && DBG.enabled) {
     dbg('ui', '点击 → 测试写任务文件（跳过点击链路）');
     const r = await send('hash-task', {
       // 仅用于生成自检任务文件，不要求该 release 真实存在；与当前版本保持一致即可
-      url: 'https://github.com/morangsu/mirror-fastlane/releases/download/v1.4.5/mirror-fastlane-edge-1.4.5.zip',
+      url: 'https://github.com/morangsu/mirror-fastlane/releases/download/v1.4.6/mirror-fastlane-edge-1.4.6.zip',
       name: 'mfl-debug-selftest.zip',
       source: 'debug 自检',
       sourceKind: 'manual',
