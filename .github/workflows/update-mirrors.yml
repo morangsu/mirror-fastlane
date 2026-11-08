@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   refresh:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04    # 钉版本：ubuntu-latest 2026-10 起迁向 26，免得哪天被动换镜像
     timeout-minutes: 10       # 拉源 20s 超时 + 推送，正常几秒；给个上限防挂死
     steps:
       # v5 起的官方 action 跑在 Node 24；v4 用的 Node 20 已被 GitHub 弃用
