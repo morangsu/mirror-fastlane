@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-10",
+  "updated": "2026-11-12",
   "note": "手工精选（无 auto 字段）永不删；其余条目整段由 git.mxg.pub 的当前 success 覆盖（auto:true），源撤下即消失。",
   "mirrors": [
     {
@@ -66,11 +66,6 @@
     {
       "name": "gh-proxy.net",
       "base": "https://gh-proxy.net",
-      "auto": true
-    },
-    {
-      "name": "gitproxy.click",
-      "base": "https://gitproxy.click",
       "auto": true
     },
     {
