@@ -98,26 +98,35 @@ try {
 
   browser = await connect(ver.webSocketDebuggerUrl);
   await browser.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: false }).catch(() => {});
-  await sleep(2200);
+  await sleep(600);
 
-  // 找到我们扩展的 service worker（按 manifest 名匹配，避免撞到浏览器内置扩展）
+  // 找到我们扩展的 service worker（按 manifest 名匹配，避免撞到浏览器内置扩展）。
+  // 冷启动时间不定：本机 ~1 秒，CI 容器上可能要十几秒，所以轮询等而不是一次性判定。
   let target = null, extId = '';
-  const { targetInfos } = await browser.call('Target.getTargets');
-  for (const t of targetInfos.filter(x => x.type === 'service_worker' && x.url.startsWith('chrome-extension://'))) {
-    try {
-      const { sessionId } = await browser.call('Target.attachToTarget', { targetId: t.targetId, flatten: true });
-      const r = await browser.call('Runtime.evaluate', {
-        expression: 'chrome.runtime.getManifest().name', returnByValue: true,
-      }, sessionId).catch(() => null);
-      if (r && r.result && TARGET_NAMES.includes(r.result.value)) {
-        target = t; extId = new URL(t.url).host;
-        var session = sessionId;
-        break;
-      }
-    } catch {}
+  let seen = [];
+  for (let i = 0; i < 100 && !target; i++) {
+    const { targetInfos } = await browser.call('Target.getTargets');
+    seen = targetInfos.filter(x => x.type === 'service_worker' || /^chrome-extension:\/\//.test(x.url || ''));
+    for (const t of seen.filter(x => x.type === 'service_worker' && x.url.startsWith('chrome-extension://'))) {
+      try {
+        const { sessionId } = await browser.call('Target.attachToTarget', { targetId: t.targetId, flatten: true });
+        const r = await browser.call('Runtime.evaluate', {
+          expression: 'chrome.runtime.getManifest().name', returnByValue: true,
+        }, sessionId).catch(() => null);
+        if (r && r.result && TARGET_NAMES.includes(r.result.value)) {
+          target = t; extId = new URL(t.url).host;
+          var session = sessionId;
+          break;
+        }
+      } catch {}
+    }
+    if (!target) await sleep(200);   // 最多等 20 秒
   }
   ok('扩展已成功加载', !!target, target ? 'id=' + extId
-    : '未找到。Chrome 137+ 默认忽略 --load-extension，需用 Chrome for Testing 或加 --disable-features=DisableLoadExtensionCommandLineSwitch');
+    : '等了 20 秒仍未出现扩展的 service worker。浏览器=' + BIN +
+      ' 扩展目录存在=' + existsSync(EXT) +
+      ' 可见目标=' + JSON.stringify(seen.slice(0, 4).map(x => x.type + ' ' + (x.url || '').slice(0, 60))) +
+      '（Chrome 137+ 默认忽略 --load-extension，需 Chrome for Testing 或 --disable-features=DisableLoadExtensionCommandLineSwitch）');
   if (!target) throw new Error('扩展未加载，终止');
 
   const evalIn = async (expression) => {
