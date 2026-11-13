@@ -49,11 +49,13 @@ jobs:
         with:
           chrome-version: stable
 
-      # headless 模式不需要 xvfb；冒烟测试只读本地文件、不访问外网，所以适合放进 CI。
-      - name: 真浏览器冒烟（headless Chrome）
+      # headless 下 MV3 的 service worker 在 CI 上始终不启动（Chrome 157 实测），
+      # 改跑有头 Chrome，用 xvfb 提供虚拟屏。冒烟只读本地文件、不访问外网。
+      - name: 真浏览器冒烟（headful Chrome + Xvfb）
         env:
           MFL_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: node test/browser-smoke.mjs
+          MFL_HEADFUL: '1'
+        run: xvfb-run -a node test/browser-smoke.mjs
 
       - name: 校验镜像清单 schema
         run: node tools/validate-mirrors.mjs

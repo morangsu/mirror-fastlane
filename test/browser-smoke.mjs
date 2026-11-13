@@ -44,7 +44,9 @@ const child = spawn(BIN, [
   `--disable-extensions-except=${EXT}`,
   `--remote-debugging-port=${PORT}`,
   '--no-first-run', '--no-default-browser-check',
-  '--headless=new',
+  // 无头模式下 MV3 的 service worker 有时不启动（CI 上实测始终看不到目标），
+  // 需要更真实的环境时设 MFL_HEADFUL=1，配合 xvfb-run 跑有头 Chrome。
+  ...(process.env.MFL_HEADFUL ? [] : ['--headless=new']),
   ...CI_FLAGS,
   'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
