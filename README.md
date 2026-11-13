@@ -466,7 +466,7 @@ node test/verify-release-test.mjs # 发版体检自身的回归（8 项，纯临
 - `npm run sync:store-readme`：打包后从 `build-info.json` 自动把三个包的体积与 SHA-256 写进 `store/README.md`，不用再手抄。
 - `npm run check:release`（`tools/verify-release.mjs`）：发版前一键体检——版本一致性、三个 zip 的完整性与 SHA-256、`store/README.md` 哈希、源码包不含 `dist/docs/store/archive`、正式包调试日志为 stub。
 - `npm run check:mirrors`（`tools/validate-mirrors.mjs`）：清单 schema 门禁；`update-mirrors.yml` 在 bot 提交前也会跑，坏清单进不了 main。
-- `.github/workflows/test.yml`：push / PR 跑纯 Node 测试（构建、逻辑单测、schema、发版体检回归）+ **headless Chrome 真浏览器冒烟**（42 项，不访问外网）。只有依赖真实网络与 PowerShell 的测试仍在本机跑。
+- `.github/workflows/test.yml`：push / PR 跑纯 Node 测试（构建、逻辑单测、schema、发版体检回归）；另外用 Chrome for Testing + Xvfb 跑一遍 42 项真浏览器冒烟，**该步骤是顾问式的**（`continue-on-error`）—— Chrome 157 在 runner 容器里不会把本扩展的 MV3 service worker 暴露成 CDP 目标，扩展装得上、设置页开得了，但冒烟依赖的 SW 会话断言跑不了，所以只保证能跑、日志可查，不阻塞合并。本机的冒烟仍是阻塞式。依赖真实网络与 `PowerShell` 的测试只在本机跑。
 
 ## 提交到商店
 
