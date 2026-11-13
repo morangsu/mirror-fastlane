@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(ROOT, 'tools', 'verify-release.mjs');
-const V = '1.4.11';
+const V = '1.4.12';
 const SRC_PREFIX = `mirror-fastlane-source-${V}`;
 const sha256 = buf => createHash('sha256').update(buf).digest('hex');
 

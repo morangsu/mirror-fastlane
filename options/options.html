@@ -94,7 +94,7 @@
   <h2 data-i18n="secMirrors">镜像列表</h2>
   <div class="card" style="padding:11px 16px;margin-bottom:10px">
     <div class="row" style="border:0;padding:0">
-      <div class="k"><b data-i18n="batchGrant">批量授权</b><small>测速需要「访问镜像域名」的权限；跳转本身不需要授权，所以不授权也能用，只是无法自动排序</small></div>
+      <div class="k"><b data-i18n="batchGrant">批量授权</b><small>测速需要「访问镜像域名」的权限；跳转本身不需要授权，但不测速时会固定用清单里排第一的镜像，它不可用就会下载失败（同一个镜像连续失败 3 次才会换下一个）</small></div>
       <button id="grantAll" class="primary" data-i18n="btnGrantBuiltin">一键授权内置镜像</button>
     </div>
     <div class="row" style="border:0;padding:0">

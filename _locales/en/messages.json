@@ -208,6 +208,6 @@
     "message": "Copy"
   },
   "tipNotPermitted": {
-    "message": "Jumping works without this permission — it only affects speed testing"
+    "message": "Jumping works without this permission, but without speed tests the extension always uses the first mirror in the list — if that one is down, downloads fail"
   }
 }

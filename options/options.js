@@ -207,7 +207,7 @@ function renderMirrors() {
     st.className = statusClass(m);
     st.textContent = statusText(m);
     // 「需授权」只表示测不了速度，跳转照常发生 —— 不写清楚很容易被理解成「没授权就用不了」
-    if (!m.permitted) st.title = t('tipNotPermitted', '跳转不需要授权，这里只影响测速排序');
+    if (!m.permitted) st.title = t('tipNotPermitted', '跳转不需要授权；但不测速会固定用清单第一条，它不可用就会下载失败');
     tdStatus.appendChild(st);
     tr.appendChild(tdStatus);
 

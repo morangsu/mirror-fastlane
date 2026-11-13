@@ -83,8 +83,8 @@ npm run store       # build + logo + 截图 + 打包，一步生成 store/packag
 npm run pack        # 只重新打包（不重拍截图）
 
 # 也可手工打包（不依赖脚本自带的 zip 实现）：
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.11.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.11.zip -Force
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.12.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.12.zip -Force
 ```
 
 发布顺序是 **提交 → 重新 pack（只刷新 `build-info.json` 里的 commit）→ 打 tag**；顺序反了 tag 会指向上一个提交。

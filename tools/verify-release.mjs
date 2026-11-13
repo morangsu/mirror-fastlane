@@ -2,7 +2,7 @@
 /* 发版前一键体检：版本真相、发布包完整性、哈希、源码包裁剪、正式包 stub。
  *
  *   node tools/verify-release.mjs                    # 完整体检（需要本地已打包）
- *   node tools/verify-release.mjs --version 1.4.11   # 覆盖期望版本号
+ *   node tools/verify-release.mjs --version 1.4.12   # 覆盖期望版本号
  *   node tools/verify-release.mjs --skip-packages   # CI：只做版本一致性 + 清单 schema，不碰 zip
  *   node tools/verify-release.mjs --root <dir>      # 指定仓库根（供 test/verify-release-test.mjs 造场景）
  *
