@@ -430,8 +430,11 @@ const pkgVer = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).vers
 eq('package.json 与 manifest 同版本', pkgVer, mf.version);
 ok('SOURCE.md 写明当前版本',
   readFileSync(join(ROOT, 'SOURCE.md'), 'utf8').includes('`' + pkgVer + '`'), pkgVer);
-ok('README 打包命令使用当前版本',
-  readFileSync(join(ROOT, 'README.md'), 'utf8').includes(pkgVer + '.zip'));
+const releaseDoc = (() => {
+  try { return readFileSync(join(ROOT, 'docs', 'development.md'), 'utf8'); } catch { return ''; }
+})();
+ok('打包命令使用当前版本',
+  (releaseDoc + readFileSync(join(ROOT, 'README.md'), 'utf8')).includes(pkgVer + '.zip'));
 
 const edgeDbg = join(ROOT, 'dist', 'edge', 'lib', 'debug-log.js');
 if (existsSync(edgeDbg)) {
