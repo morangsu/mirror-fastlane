@@ -27,6 +27,16 @@ const profile = mkdtempSync(join(tmpdir(), 'mfl-smoke-'));
 const dlDir = mkdtempSync(join(tmpdir(), 'mfl-dl-'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// CI（Linux 容器）需要的额外开关：
+//  - no-sandbox / disable-dev-shm-usage：容器里没有 namespace 与足够 /dev/shm
+//  - DisableLoadExtensionCommandLineSwitch：Chrome 137+ 默认忽略 --load-extension，
+//    关掉这个特性才能继续用命令行加载扩展（Chrome for Testing 默认就允许）
+const CI_FLAGS = process.env.CI ? [
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-features=DisableLoadExtensionCommandLineSwitch',
+] : [];
+
 const child = spawn(BIN, [
   `--user-data-dir=${profile}`,
   `--load-extension=${EXT}`,
@@ -34,6 +44,7 @@ const child = spawn(BIN, [
   `--remote-debugging-port=${PORT}`,
   '--no-first-run', '--no-default-browser-check',
   '--headless=new',
+  ...CI_FLAGS,
   'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
@@ -105,7 +116,8 @@ try {
       }
     } catch {}
   }
-  ok('扩展已成功加载', !!target, target ? 'id=' + extId : '未找到，浏览器可能禁用了 --load-extension');
+  ok('扩展已成功加载', !!target, target ? 'id=' + extId
+    : '未找到。Chrome 137+ 默认忽略 --load-extension，需用 Chrome for Testing 或加 --disable-features=DisableLoadExtensionCommandLineSwitch');
   if (!target) throw new Error('扩展未加载，终止');
 
   const evalIn = async (expression) => {

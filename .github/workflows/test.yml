@@ -41,12 +41,19 @@ jobs:
       - name: 发布体检回归
         run: node test/verify-release-test.mjs
 
-      # GitHub 托管的 ubuntu runner 预装 Chrome；headless 模式不需要 xvfb。
-      # 冒烟测试只读本地文件、不访问外网，所以适合放进 CI。
+      # runner 自带的 google-chrome 是正式版，从 137 起命令行 --load-extension 被忽略，
+      # 扩展根本不会加载。Chrome for Testing 是官方给自动化用的构建，仍然允许命令行加载扩展。
+      - name: 安装 Chrome for Testing
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      # headless 模式不需要 xvfb；冒烟测试只读本地文件、不访问外网，所以适合放进 CI。
       - name: 真浏览器冒烟（headless Chrome）
-        run: |
-          MFL_BIN="$(command -v google-chrome || command -v google-chrome-stable)" \
-            node test/browser-smoke.mjs
+        env:
+          MFL_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: node test/browser-smoke.mjs
 
       - name: 校验镜像清单 schema
         run: node tools/validate-mirrors.mjs
