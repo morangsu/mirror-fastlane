@@ -395,8 +395,7 @@ async function probeAll(reason, onlyIds) {
       targets = targets.filter(m => !(m.stats && m.stats.lastProbe &&
         Date.now() - m.stats.lastProbe < cacheMs && m.healthy));
     }
-    targets.sort((a, b) => ((a.stats && a.stats.lastProbe) || 0) - ((b.stats && b.stats.lastProbe) || 0));
-    if (targets.length > PROBE_ROTATE_MAX) targets = targets.slice(0, PROBE_ROTATE_MAX);
+    targets = MFL.pickProbeTargets(targets, PROBE_ROTATE_MAX, Date.now());
   }
   if (!targets.length) return { probed: 0, skipped: 'fresh-or-cached' };
 
@@ -418,8 +417,10 @@ async function probeAll(reason, onlyIds) {
       healthy: fail < 3,
       rawStats: nextRawStats(m.rawStats, r.raw),
       stats: {
-        kbps: verdict.ok ? Math.round(r.result.kbps) : 0,
-        ttfb: verdict.ok ? Math.round(r.result.ttfb) : 0,
+        // 单次抖动不要把速度清零：失败时保留上次测得的值，只累加 failures。
+        // 否则一次超时就会让「300 KB/s 的可用镜像」变成 0 分排到最后，排名剧烈跳动。
+        kbps: verdict.ok ? Math.round(r.result.kbps) : ((m.stats && m.stats.kbps) || 0),
+        ttfb: verdict.ok ? Math.round(r.result.ttfb) : ((m.stats && m.stats.ttfb) || 0),
         failures: fail,
         lastProbe: probedAt,
         lastError: verdict.ok ? '' : verdict.reason,
@@ -947,8 +948,8 @@ const handlers = {
         healthy: fail < 3,
         rawStats: nextRawStats(x.rawStats, raw),
         stats: {
-          kbps: verdict.ok ? Math.round(r.kbps) : 0,
-          ttfb: verdict.ok ? Math.round(r.ttfb) : 0,
+          kbps: verdict.ok ? Math.round(r.kbps) : ((x.stats && x.stats.kbps) || 0),
+          ttfb: verdict.ok ? Math.round(r.ttfb) : ((x.stats && x.stats.ttfb) || 0),
           failures: fail,
           lastProbe: at,
           lastError: verdict.ok ? '' : verdict.reason,
@@ -975,6 +976,7 @@ const handlers = {
   },
   'switch-mirror': async () => switchMirror(),
   'diagnostic': async () => ({ ok: true, data: await buildDiagnostic() }),
+  'self-check': async () => ({ ok: true, check: await buildSelfCheck() }),
 
   'badge-info': async () => {
     const settings = await getSettings();
@@ -1293,6 +1295,69 @@ async function buildDiagnostic() {
       stats: m.stats || {}, rawStats: m.rawStats || {},
     })),
   };
+}
+
+/** 一键自检：把「规则 / 权限 / 镜像 / storage / 清单 / 最近探测」摊成分级结论 */
+async function buildSelfCheck() {
+  const st = await getState();
+  const s = st.settings || {};
+  const items = [];
+  const push = (level, text) => items.push({ level, text });
+
+  const ri = st.ruleInfo || {};
+  if (ri.error) push('fail', '规则重建失败：' + ri.error);
+  else if (!ri.count) push('warn', '当前没有生效规则' + (ri.active ? '' : '（不在生效时段）'));
+  else push('ok', '规则 ' + ri.count + ' 条' + (ri.active ? '，生效中' : '，不在生效时段'));
+
+  const mirrors = st.mirrors || [];
+  const enabled = mirrors.filter(m => m.enabled);
+  const usable = enabled.filter(m => m.healthy && m.permitted);
+  push(usable.length ? 'ok' : 'fail', '可用镜像 ' + usable.length + ' / ' + mirrors.length + '（启用 ' + enabled.length + '）');
+  const noPerm = enabled.filter(m => !m.permitted).length;
+  if (noPerm) push('warn', noPerm + ' 个启用中的镜像未授权：能跳转，但无法测速/排序');
+  const sick = enabled.filter(m => !m.healthy).length;
+  if (sick) push('warn', sick + ' 个启用中的镜像当前不可用（探测会排到最后，仍保留 1 个复活名额）');
+  if (!enabled.length) push('fail', '所有镜像都被停用了，下载会走主站');
+
+  if (s.raw && s.raw.enabled) {
+    const rawOk = await hasPermission('https://raw.githubusercontent.com');
+    push(rawOk ? 'ok' : 'fail', rawOk ? 'raw 加速已开启，raw 主机权限正常' : 'raw 加速已开启，但缺少 raw.githubusercontent.com 权限（规则不会生成）');
+    if (typeof ext.webRequest === 'undefined') {
+      push('warn', '此浏览器没有可用的 webRequest 观察权限：raw 失败率统计不可用，加速本身不受影响');
+    }
+  }
+
+  if (s.hash && s.hash.enabled) {
+    let apiOk = false;
+    try { apiOk = await ext.permissions.contains({ origins: ['https://api.github.com/*'] }); } catch { /* ignore */ }
+    push(apiOk ? 'ok' : 'warn', apiOk ? '哈希校验权限正常' : '哈希校验已开启，但缺少 api.github.com 权限，取不到期望哈希');
+  }
+
+  const bytes = await ext.storage.local.getBytesInUse(null).catch(() => 0);
+  push(bytes > 1024 * 1024 ? 'warn' : 'ok', 'storage 占用 ' + Math.round(bytes / 1024) + ' KB');
+  push(st.mirrors.length > 60 ? 'warn' : 'ok', '镜像条数 ' + st.mirrors.length + '（上限 60）');
+
+  if (st.lastProbe) {
+    const days = (Date.now() - st.lastProbe) / 86400000;
+    push(days > 7 ? 'warn' : 'ok', '上次测速 ' + MFL.relativeTime(st.lastProbe));
+  } else {
+    push('warn', '从未测速：跳转仍可用，但没有速度排序');
+  }
+
+  if (s.remoteList && s.remoteList.enabled) {
+    const lf = st.listFetched;
+    if (lf && lf.ok) push('ok', '远程清单 ' + MFL.relativeTime(lf.at) + '获取成功（经 ' + (lf.via || '直连') + '）');
+    else push('warn', '远程清单已启用，但没有一次成功获取：开启任意镜像授权可提高成功率');
+  }
+
+  const order = { fail: 0, warn: 1, ok: 2 };
+  const sorted = items.slice().sort((a, b) => order[a.level] - order[b.level]);
+  const ver = ext.runtime.getManifest().version;
+  const tag = ext.runtime.getManifest().debug ? 'debug 构建' : '正式包';
+  const text = ['镜像快车道自检 ' + ver + '（' + tag + '）']
+    .concat(sorted.map(i => '[' + i.level.toUpperCase() + '] ' + i.text))
+    .join('\n');
+  return { at: Date.now(), version: ver, items: sorted, text };
 }
 
 /* ---------------------------- 下载事件（诊断） ----------------------------

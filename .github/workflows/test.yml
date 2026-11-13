@@ -1,9 +1,9 @@
 name: test
 
-# 只跑纯 Node、无需浏览器与 PowerShell 的检查。
+# 纯 Node 检查 + 一次真浏览器冒烟（headless Chrome）。
 # 下面这些故意不纳入，否则 CI 会长期红叉：
-#   test/browser-smoke.mjs / test/redirect-check.mjs / test/taskfile-e2e.mjs  → 需要真浏览器 + CDP
-#   test/run-ps-tests.mjs                                                      → 需要 Windows PowerShell
+#   test/redirect-check.mjs / test/taskfile-e2e.mjs  → 依赖真实网络（GitHub/镜像）
+#   test/run-ps-tests.mjs                            → 需要 Windows PowerShell
 "on":
   push:
     branches: [main]
@@ -40,6 +40,13 @@ jobs:
       # 发布体检自身的回归测试：完全在临时目录造数据，不读真实发布包
       - name: 发布体检回归
         run: node test/verify-release-test.mjs
+
+      # GitHub 托管的 ubuntu runner 预装 Chrome；headless 模式不需要 xvfb。
+      # 冒烟测试只读本地文件、不访问外网，所以适合放进 CI。
+      - name: 真浏览器冒烟（headless Chrome）
+        run: |
+          MFL_BIN="$(command -v google-chrome || command -v google-chrome-stable)" \
+            node test/browser-smoke.mjs
 
       - name: 校验镜像清单 schema
         run: node tools/validate-mirrors.mjs

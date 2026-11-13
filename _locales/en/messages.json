@@ -191,5 +191,20 @@
   },
   "lbCurrentParse": {
     "message": "Current resolution"
+  },
+  "rawEnableLabel": {
+    "message": "Enable raw acceleration"
+  },
+  "lbRawObserved": {
+    "message": "Recent observations"
+  },
+  "lbSelfCheck": {
+    "message": "Self-check"
+  },
+  "btnSelfCheck": {
+    "message": "Run self-check"
+  },
+  "btnCopy": {
+    "message": "Copy"
   }
 }

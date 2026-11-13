@@ -36,8 +36,8 @@ npm test            # 全套回归测试
 
 ## 版本对应
 
-- 提交版本：`1.4.10`
+- 提交版本：`1.4.11`
 - 源码仓库：https://github.com/morangsu/mirror-fastlane
-- 对应 tag：`v1.4.10`；对应提交见仓库 `git log` 与该 tag 指向的 commit
+- 对应 tag：`v1.4.11`；对应提交见仓库 `git log` 与该 tag 指向的 commit
 - 本地构建清单 `store/packages/build-info.json` 记录打包时的 commit 与各包 SHA-256，仅用于本机核对，不随源码包分发
 - 上架包 SHA-256：见 `store/README.md`。zip comment 写入版本号而非 commit hash，避免「提交 → 打包 → 哈希变化 → 改文档 → 再提交」的循环依赖

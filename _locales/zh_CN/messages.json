@@ -190,5 +190,20 @@
   },
   "lbCurrentParse": {
     "message": "当前解析"
+  },
+  "rawEnableLabel": {
+    "message": "开启 raw 加速"
+  },
+  "lbRawObserved": {
+    "message": "最近观测"
+  },
+  "lbSelfCheck": {
+    "message": "一键自检"
+  },
+  "btnSelfCheck": {
+    "message": "运行自检"
+  },
+  "btnCopy": {
+    "message": "复制"
   }
 }

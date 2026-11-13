@@ -249,6 +249,7 @@ function render() {
   $('codeloadProbe').checked = !!(s.codeload && s.codeload.probeOn);
   $('splitMirrors').checked = !!(s.split && s.split.enabled);
   $('rawEnabled').checked = !!(s.raw && s.raw.enabled);
+  $('rawEnabled2').checked = !!(s.raw && s.raw.enabled);   // 统计卡片里的同一个开关
   $('probeMode').value = s.probeMode || 'ondemand';
   $('probeInterval').value = s.probeIntervalMin || 60;
   $('winEnabled').checked = !!(s.activeWindow && s.activeWindow.enabled);
@@ -334,7 +335,8 @@ function render() {
   $('grantRemote').textContent = t('btnGrantRemote', '授权远程镜像') + (pendingRemote ? '（' + pendingRemote + '）' : '');
 
   $('probeInterval').disabled = s.probeMode !== 'interval';
-  updateHashStatus();   // 异步刷新，不阻塞界面渲染
+  updateHashStatus();     // 异步刷新，不阻塞界面渲染
+  checkPermsOnRender();   // 「已开启但权限被撤销/拒绝」时给出可操作指引
 }
 
 /* --------------------------------- 事件 ---------------------------------- */
@@ -423,6 +425,7 @@ async function toggleHashFlag(flag, el) {
   // 先 await 读一次 state 手势就丢了 —— 表现就是弹窗不出现、开关自己弹回去。
   if (el.checked && !(await ensureApiPermission())) {
     el.checked = false;
+    showPermHelp();
     return toast('未获得 api.github.com 授权，取不到期望哈希');
   }
 
@@ -474,7 +477,10 @@ async function updateHashStatus() {
 $('enableAutoHash').addEventListener('click', async () => {
   dbg('ui', '点击 → 一键开启自动校验');
   // permissions.request 必须在用户手势的调用栈里发起，所以先申请再保存
-  if (!(await ensureApiPermission())) return toast('未获得 api.github.com 授权，取不到期望哈希');
+  if (!(await ensureApiPermission())) {
+    showPermHelp();
+    return toast('未获得 api.github.com 授权，取不到期望哈希');
+  }
   const token = $('token').value.trim();
   const patch = { hash: { enabled: true, auto: true } };
   if (token) patch.token = token;
@@ -550,11 +556,17 @@ async function requestRawBundle(originsOnly) {
   }
 }
 
-$('rawEnabled').addEventListener('change', async e => {
-  const el = e.target;
+/** 两个 raw 开关（改写行为 / 统计卡片）共用这一个处理函数 */
+async function handleRawToggle(el) {
   if (el.checked) {
     const r = await requestRawBundle();
-    if (!r.ok) { el.checked = false; return toast('未获得 raw 相关授权，raw 加速没有开启'); }
+    if (!r.ok) {
+      el.checked = false;
+      $('rawEnabled').checked = false;
+      $('rawEnabled2').checked = false;
+      showPermHelp();
+      return toast('未获得 raw 相关授权，raw 加速没有开启');
+    }
     let wrOk = false;
     try { wrOk = await ext.permissions.contains({ permissions: ['webRequest'] }); } catch {}
     if (!wrOk) {
@@ -564,7 +576,86 @@ $('rawEnabled').addEventListener('change', async e => {
   }
   await send('save-settings', { patch: { raw: Object.assign({}, state.settings.raw, { enabled: el.checked }) } });
   await send('apply');
-  if (el.checked) toast('已开启 raw 加速：按 raw 自身延迟选前 5 个镜像分片');
+  $('rawEnabled').checked = !!el.checked;
+  $('rawEnabled2').checked = !!el.checked;
+  if (el.checked) { hidePermHelp(); toast('已开启 raw 加速：按 raw 自身延迟选前 5 个镜像分片'); }
+}
+$('rawEnabled').addEventListener('change', e => handleRawToggle(e.target));
+$('rawEnabled2').addEventListener('change', e => handleRawToggle(e.target));
+
+/* ----------------------------- 权限帮助（关键提示） -----------------------------
+ * Firefox 会记住「拒绝」，之后 permissions.request 直接返回 false、不再弹窗；
+ * 用户只看到「未获得授权」是没法自救的，这里把下一步直接写出来。
+ */
+function permHelpTarget() {
+  return isFirefoxBrowser() ? 'about:addons' : 'edge://extensions';
+}
+
+function showPermHelp(extra) {
+  const text = isEn()
+    ? (isFirefoxBrowser()
+      ? 'Firefox remembers a denied permission and will not ask again. Open about:addons → Mirror Fastlane → Permissions → enable site access, then click Authorize again.'
+      : 'The browser did not grant the permission. Open the extension details → Site access → Allow, then retry.')
+    : (isFirefoxBrowser()
+      ? 'Firefox 会记住「拒绝」，之后不会再弹窗。请打开 about:addons → 镜像快车道 → 权限 → 打开「访问网站」，再回来点一次授权。'
+      : '浏览器没有真正授予权限。请打开扩展详情页 → 站点访问权限 → 允许，再回来重试。');
+  $('permHelpText').textContent = (extra ? extra + ' ' : '') + text;
+  $('permHelp').style.display = '';
+}
+
+function hidePermHelp() {
+  $('permHelp').style.display = 'none';
+}
+
+$('permHelpClose').addEventListener('click', hidePermHelp);
+$('permHelpCopy').addEventListener('click', async () => {
+  const target = permHelpTarget();
+  try { await navigator.clipboard.writeText(target); toast('已复制：' + target); }
+  catch { toast(target); }
+});
+
+/** 已开启某个功能、但浏览器权限被撤销/拒绝时，主动把指引摆出来 */
+async function checkPermsOnRender() {
+  if (!state) return;
+  const s = state.settings || {};
+  let missing = false;
+  if (s.raw && s.raw.enabled) {
+    try { missing = !(await ext.permissions.contains({ origins: ['https://raw.githubusercontent.com/*'] })); } catch { /* ignore */ }
+  }
+  if (!missing && s.hash && s.hash.enabled) {
+    try { missing = !(await ext.permissions.contains({ origins: ['https://api.github.com/*'] })); } catch { /* ignore */ }
+  }
+  if (missing) showPermHelp(); else hidePermHelp();
+}
+
+/* --------------------------------- 一键自检 --------------------------------- */
+
+$('selfCheck').addEventListener('click', async () => {
+  const btn = $('selfCheck');
+  btn.disabled = true;
+  btn.textContent = '检查中…';
+  const r = await send('self-check');
+  btn.disabled = false;
+  btn.textContent = t('btnSelfCheck', '运行自检');
+  const out = $('selfCheckOut');
+  out.style.display = '';
+  if (!r || !r.check) { out.textContent = '自检失败：' + ((r && r.error) || '未知'); return; }
+  out.textContent = r.check.text;
+  const bad = (r.check.items || []).filter(i => i.level === 'fail').length;
+  toast(bad ? '发现 ' + bad + ' 个需要处理的问题' : '自检通过');
+});
+
+$('selfCheckCopy').addEventListener('click', async () => {
+  const text = $('selfCheckOut').textContent || '';
+  if (!text || text === '—') return toast('先运行一次自检');
+  try { await navigator.clipboard.writeText(text); toast('已复制自检结果'); }
+  catch {
+    const r = document.createRange();
+    r.selectNodeContents($('selfCheckOut'));
+    const sel = getSelection();
+    sel.removeAllRanges(); sel.addRange(r);
+    toast('已选中，按 Ctrl+C 复制');
+  }
 });
 
 /* --------------------------- raw 统计与诊断 UI --------------------------- */

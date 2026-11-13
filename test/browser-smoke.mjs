@@ -277,6 +277,18 @@ try {
   ok('用户手动删掉的内置镜像不会被补齐复活', seedHeal.stayed, JSON.stringify(seedHeal));
   ok('清掉墓碑后清单恢复原条数', seedHeal.restored === seedHeal.before, JSON.stringify(seedHeal));
 
+  /* 7d. 一键自检：分级结果 + 可复制文本 */
+  const chk = await evalIn(`(async () => {
+    const r = await handlers['self-check']();
+    return r && r.check ? { items: r.check.items, text: r.check.text } : null;
+  })()`);
+  ok('自检返回分级结果',
+    !!(chk && Array.isArray(chk.items) && chk.items.length >= 3 && /\[(OK|WARN|FAIL)\]/.test(chk.text)),
+    chk ? chk.text.split('\n').slice(0, 2).join(' | ') : 'null');
+  ok('自检结果包含可用镜像与规则两类结论',
+    !!(chk && chk.text.includes('镜像') && chk.text.includes('规则')),
+    chk ? chk.text.slice(0, 100) : 'null');
+
   /* 8. 设置页渲染 */
   await browser.call('Target.createTarget', { url: `chrome-extension://${extId}/options/options.html` });
   await sleep(1600);
@@ -294,6 +306,11 @@ try {
         first: (document.querySelector('#mirrorBody tr')||{}).innerText || '',
         uiRaw: !!document.getElementById('rawStatsInfo'),
         uiDiag: !!document.getElementById('diagExport'),
+        rawA: !!document.getElementById('rawEnabled'),
+        rawB: !!document.getElementById('rawEnabled2'),
+        rawSame: (document.getElementById('rawEnabled')||{}).checked ===
+                 (document.getElementById('rawEnabled2')||{}).checked,
+        selfCheckBtn: !!document.getElementById('selfCheck'),
         i18nCount: document.querySelectorAll('[data-i18n]').length,
         title: (document.querySelector('h1')||{}).textContent || '' }))()`,
       returnByValue: true,
@@ -302,6 +319,10 @@ try {
     ok('设置页显示规则状态', !!v.tag && v.tag !== '—', JSON.stringify(v).slice(0, 160));
     ok('首行含镜像域名', /https?|\./.test(v.first), v.first.replace(/\s+/g, ' ').slice(0, 80));
     ok('raw 统计与诊断导出按钮都在', v.uiRaw && v.uiDiag, JSON.stringify({ uiRaw: v.uiRaw, uiDiag: v.uiDiag }));
+    ok('raw 两个开关都在且状态一致',
+      v.rawA && v.rawB && v.rawSame,
+      JSON.stringify({ a: v.rawA, b: v.rawB, same: v.rawSame }));
+    ok('设置页有一键自检按钮', v.selfCheckBtn, String(v.selfCheckBtn));
     ok('设置页关键标签已挂双语字典', v.i18nCount >= 30 && TARGET_NAMES.includes(v.title),
       JSON.stringify({ count: v.i18nCount, title: v.title }));
 

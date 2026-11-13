@@ -737,6 +737,23 @@ ok('镜像表写入已串行化（mutateMirrors 存在且探测收尾不再整�
   return /function mutateMirrors\(/.test(bg) && /mutateMirrors\(latest => latest\.map/.test(bg);
 })());
 
+/* 轮转挑目标：健康优先、坏镜像最多 1 个名额（不能全跳过，否则永远没机会恢复） */
+const mkM = (i, healthy, last) => ({ id: 'm' + i, enabled: true, healthy, stats: { lastProbe: last } });
+const nineHealthy = Array.from({ length: 9 }, (_, i) => mkM(i, true, i));
+const threeSick = [mkM(90, false, 100), mkM(91, false, 300), mkM(92, false, 200)];
+const pickedMix = MFL.pickProbeTargets(nineHealthy.concat(threeSick), 6);
+eq('轮转总数不超过上限', pickedMix.length, 6);
+eq('坏镜像每轮只占 1 个名额', pickedMix.filter(m => !m.healthy).length, 1);
+eq('挑中的坏镜像是最久没测的那个', pickedMix.find(m => !m.healthy).id, 'm90');
+eq('全健康时取满 6 个', MFL.pickProbeTargets(nineHealthy, 6).length, 6);
+const allSick = Array.from({ length: 8 }, (_, i) => mkM(i, false, i));
+eq('全坏时仍测 1 个（保留复活机会）', MFL.pickProbeTargets(allSick, 6).length, 1);
+eq('停用的镜像不进入候选', MFL.pickProbeTargets([Object.assign(mkM(1, true, 0), { enabled: false })], 6).length, 0);
+eq('探测失败时保留上次速度（源码守卫）', (() => {
+  const bg = readFileSync(join(ROOT, 'background.js'), 'utf8');
+  return /kbps: verdict\.ok \? Math\.round\(r\.result\.kbps\) : \(\(m\.stats && m\.stats\.kbps\) \|\| 0\)/.test(bg);
+})(), true);
+
 /* -------------------------------- 汇总 -------------------------------- */
 
 console.log('\n' + '─'.repeat(52));

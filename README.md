@@ -127,12 +127,14 @@ DNR 里**一个请求只会命中一条规则**，规则之间不存在"这个�
 - **真实下载失败**：`downloads.onChanged` 里的 `interrupted`（排除用户取消、关机、浏览器崩溃）会给对应镜像记一次故障并重建规则，自动换到下一个健康镜像；同一镜像 10 分钟内只记一次，避免失败风暴。
 - **raw 请求失败率**：开启 raw 后统计最近 30 分钟**真实 raw 请求**的成败（只看 URL 与状态码，不读内容、不阻断）。404/410 是「文件真的不存在」，不计成败；429/5xx 才算镜像故障。失败占比达到阈值（默认 30%，至少 5 个样本）会**立刻重测 raw 分片并重排 top 5**，随后进入冷却（默认 5 分钟）。样本只存本机 storage，不上传。
   - 观测不到结果的请求（多为分片域名还没授权）记为「无法观测」，**不计入分母**，避免把「看不见」误判成「失败」；设置页能看到这个数字并一键补授权。
-- **探测预算**：单次探测 256 KB → 64 KB；按时 / 按需探测跳过 `probeCacheHours`（默认 2 小时）内已测过且健康的镜像，按「最久没测」轮转、每轮最多 6 个，并发从 3 提到 6（17 条全量的轮数 6 → 3，慢镜像不再逐个排队）。手动「立即测速全部」仍测全部。
+- **探测预算**：单次探测 256 KB → 64 KB；按时 / 按需探测跳过 `probeCacheHours`（默认 2 小时）内已测过且健康的镜像，按「最久没测」轮转、每轮最多 6 个，并发从 3 提到 6（17 条全量的轮数 6 → 3，慢镜像不再逐个排队）。**坏镜像每轮只占 1 个名额**（最久没测的那个），既不让它们拖慢整轮，又保留恢复健康的机会；探测失败时**保留上次测得的速度**，单次抖动不会把好镜像清零。手动「立即测速全部」仍测全部。
 - **判定修正**：200 的 HTML 错误页、只读到几百字节都不再算健康；超时但已读够 8 KB 算「部分成功」（速度偏低自然降权），不再一律判死。
 - **规则失败可见**：`updateDynamicRules` 抛错时徽章变 `!`、设置页显示红字，不再停在上一次的「生效中」。
 - **少唤醒**：没开「生效时段」时不创建 5 分钟 tick；SW 每次唤醒用规则指纹比对，规则没变就不做 DNR 全删全加。
 - **并发写入**：镜像表的所有读-改-写排队；探测跑几十秒后按**最新**列表合并探测字段，用户在这期间的停用 / 删除不会被静默回滚（真浏览器回归测试里守着这条）。
 - **看得见的数据**：清单里的 `note`（如「IDM 建议 4 连接」）与 `seedKbps` 现在会显示在镜像列表；「诊断」区可导出一份脱敏 JSON 快照（Token 打码），正式包也能自查。
+- **一键自检**：「诊断」区能跑一次自检，按 OK / WARN / FAIL 列出规则、权限、可用镜像、storage、远程清单与最近探测，结果可一键复制。
+- **权限被拒可自救**：申请失败、或「已开启但权限被撤销」时，设置页会直接给出下一步路径（Firefox：`about:addons` → 权限 → 访问网站；Chromium：扩展详情页 → 站点访问权限），并可复制该地址。
 - **双语**：设置页的状态、按钮、表头与关键提示走 `_locales`（中 / 英），正文说明保持中文；远程清单**默认仍关闭**——内置镜像开箱可用。
 
 ## 哈希校验（可选）
@@ -432,11 +434,11 @@ npm run check:idm
 
 ```bash
 npm test                       # 全套（build + 以下 7 组）
-node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（271 项）
+node test/run-tests.mjs        # 纯逻辑 + 清单完整性 + 合规扫描 + 发布防呆（278 项）
 node test/debug-log-test.mjs   # 调试日志并发写入与脱敏（4 项）
 node test/content-state-test.mjs # 内容脚本状态刷新（7 项）
 node test/refresh-mirrors-test.mjs # 清单刷新脚本：精选保留 / 整段覆盖 / 空源拒绝（30 项）
-node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（38 项）
+node test/browser-smoke.mjs    # 真浏览器加载扩展，校验规则/设置页/校验页（42 项）
 node test/redirect-check.mjs   # 端到端：github 链接确实被 302 到镜像（10 项）
 node test/taskfile-e2e.mjs     # 端到端：扩展写出的校验任务文件内容正确（18 项）
 node test/run-ps-tests.mjs     # 脚本逻辑（79 项断言，自动找 pwsh / powershell）
@@ -445,7 +447,7 @@ npx --yes web-ext lint --source-dir dist/firefox   # Firefox 上架前静态检�
 
 node test/verify-release-test.mjs # 发版体检自身的回归（8 项，纯临时目录）
 
-单元测试 271 项、脚本测试 79 项，其余 115 项（debug 日志 4 + 内容脚本 7 + 清单刷新 30 + 冒烟 38 + 改写 10 + 任务文件 18 + 发版体检 8），合计 **465 项**。
+单元测试 278 项、脚本测试 79 项，其余 119 项（debug 日志 4 + 内容脚本 7 + 清单刷新 30 + 冒烟 42 + 改写 10 + 任务文件 18 + 发版体检 8），合计 **476 项**。
 
 `test/run-ps-tests.mjs` 会自动找 `pwsh` 或 `powershell`，在临时目录里跑完全部用例：
 
@@ -464,7 +466,7 @@ node test/verify-release-test.mjs # 发版体检自身的回归（8 项，纯临
 - `npm run sync:store-readme`：打包后从 `build-info.json` 自动把三个包的体积与 SHA-256 写进 `store/README.md`，不用再手抄。
 - `npm run check:release`（`tools/verify-release.mjs`）：发版前一键体检——版本一致性、三个 zip 的完整性与 SHA-256、`store/README.md` 哈希、源码包不含 `dist/docs/store/archive`、正式包调试日志为 stub。
 - `npm run check:mirrors`（`tools/validate-mirrors.mjs`）：清单 schema 门禁；`update-mirrors.yml` 在 bot 提交前也会跑，坏清单进不了 main。
-- `.github/workflows/test.yml`：push / PR 跑纯 Node 测试（构建、逻辑单测、schema、发版体检回归）。真浏览器与 PowerShell 测试仍在本机跑，CI 上跑不了。
+- `.github/workflows/test.yml`：push / PR 跑纯 Node 测试（构建、逻辑单测、schema、发版体检回归）+ **headless Chrome 真浏览器冒烟**（42 项，不访问外网）。只有依赖真实网络与 PowerShell 的测试仍在本机跑。
 
 ## 提交到商店
 
@@ -482,8 +484,8 @@ npm run store       # build + logo + 截图 + 打包，一步生成 store/packag
 npm run pack        # 只重新打包（不重拍截图）
 
 # 也可手工打包（不依赖脚本自带的 zip 实现）：
-Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.10.zip -Force
-Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.10.zip -Force
+Compress-Archive -Path dist\edge\*    -DestinationPath mirror-fastlane-edge-1.4.11.zip -Force
+Compress-Archive -Path dist\firefox\* -DestinationPath mirror-fastlane-firefox-1.4.11.zip -Force
 ```
 
 `hooks/` 不在扩展包里——它是可选增强，单独作为 release 资产发布，

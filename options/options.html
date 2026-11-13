@@ -83,6 +83,14 @@
     <div id="ruleError" class="warnbox" style="display:none;margin-top:10px"></div>
   </div>
 
+  <div id="permHelp" class="warnbox" style="display:none;margin-top:10px">
+    <div id="permHelpText"></div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button id="permHelpCopy" data-i18n="btnCopy">复制</button>
+      <button id="permHelpClose">知道了</button>
+    </div>
+  </div>
+
   <h2 data-i18n="secMirrors">镜像列表</h2>
   <div class="card" style="padding:11px 16px;margin-bottom:10px">
     <div class="row" style="border:0;padding:0">
@@ -189,7 +197,14 @@
   <h2 data-i18n="secRawStats">raw 请求统计</h2>
   <div class="card">
     <div class="row">
-      <div class="k"><b data-i18n="lbDlFailures">最近观测</b><small id="rawStatsInfo">—</small></div>
+      <div class="k">
+        <b data-i18n="rawEnableLabel">开启 raw 加速</b>
+        <small>和「改写行为」里的开关是同一个。开启时会申请 raw 主机与当前分片域名的权限；失败率统计只在这之后才开始累计。</small>
+      </div>
+      <input type="checkbox" id="rawEnabled2">
+    </div>
+    <div class="row">
+      <div class="k"><b data-i18n="lbRawObserved">最近观测</b><small id="rawStatsInfo">—</small></div>
       <span>
         <button id="rawReprobe" data-i18n="btnRawReprobe">立即重测 raw</button>
         <button id="rawShards" data-i18n="btnRawShards">补授权 raw 分片</button>
@@ -280,6 +295,17 @@
         <button id="reapply" data-i18n="btnReapply">重建规则</button>
       </span>
     </div>
+    <div class="row">
+      <div class="k">
+        <b data-i18n="lbSelfCheck">一键自检</b>
+        <small>检查规则、权限、可用镜像、storage、远程清单与最近探测，输出可复制的结果</small>
+      </div>
+      <span>
+        <button id="selfCheck" data-i18n="btnSelfCheck">运行自检</button>
+        <button id="selfCheckCopy" data-i18n="btnCopy">复制</button>
+      </span>
+    </div>
+    <pre id="selfCheckOut" style="display:none;margin:10px 0 0;padding:9px;border-radius:6px;background:rgba(127,127,127,.12);white-space:pre-wrap;font-size:11.5px;line-height:1.55">—</pre>
   </div>
 
   <!-- MFL_DEBUG_PANEL_START -->
