@@ -206,6 +206,8 @@ function renderMirrors() {
     const st = document.createElement('span');
     st.className = statusClass(m);
     st.textContent = statusText(m);
+    // 「需授权」只表示测不了速度，跳转照常发生 —— 不写清楚很容易被理解成「没授权就用不了」
+    if (!m.permitted) st.title = t('tipNotPermitted', '跳转不需要授权，这里只影响测速排序');
     tdStatus.appendChild(st);
     tr.appendChild(tdStatus);
 

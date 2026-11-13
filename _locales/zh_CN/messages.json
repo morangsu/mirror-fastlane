@@ -205,5 +205,8 @@
   },
   "btnCopy": {
     "message": "复制"
+  },
+  "tipNotPermitted": {
+    "message": "跳转不需要授权，这里只影响测速排序"
   }
 }

@@ -206,5 +206,8 @@
   },
   "btnCopy": {
     "message": "Copy"
+  },
+  "tipNotPermitted": {
+    "message": "Jumping works without this permission — it only affects speed testing"
   }
 }
