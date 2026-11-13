@@ -35,6 +35,7 @@ const CI_FLAGS = process.env.CI ? [
   '--no-sandbox',
   '--disable-dev-shm-usage',
   '--disable-features=DisableLoadExtensionCommandLineSwitch',
+  '--enable-unsafe-extension-debugging',
 ] : [];
 
 const child = spawn(BIN, [
@@ -98,6 +99,16 @@ try {
 
   browser = await connect(ver.webSocketDebuggerUrl);
   await browser.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: false }).catch(() => {});
+
+  // Chrome 137+ 已经彻底不认命令行 --load-extension（老浏览器没有 Extensions 域，会直接报错）。
+  // 这里再用 CDP 的 Extensions.loadUnpacked 兜底：CI 上靠它加载，本机旧版浏览器走命令行那条路。
+  let cdpLoadError = '';
+  try {
+    const r = await browser.call('Extensions.loadUnpacked', { path: EXT, keepAlive: true });
+    if (r && r.id) console.log('  已通过 CDP 加载扩展:', r.id);
+  } catch (e) {
+    cdpLoadError = String((e && e.message) || e).slice(0, 120);
+  }
   await sleep(600);
 
   // 找到我们扩展的 service worker（按 manifest 名匹配，避免撞到浏览器内置扩展）。
@@ -125,8 +136,8 @@ try {
   ok('扩展已成功加载', !!target, target ? 'id=' + extId
     : '等了 20 秒仍未出现扩展的 service worker。浏览器=' + BIN +
       ' 扩展目录存在=' + existsSync(EXT) +
-      ' 可见目标=' + JSON.stringify(seen.slice(0, 4).map(x => x.type + ' ' + (x.url || '').slice(0, 60))) +
-      '（Chrome 137+ 默认忽略 --load-extension，需 Chrome for Testing 或 --disable-features=DisableLoadExtensionCommandLineSwitch）');
+      ' CDP 加载=' + (cdpLoadError ? '失败(' + cdpLoadError + ')' : '未报错') +
+      ' 可见目标=' + JSON.stringify(seen.slice(0, 4).map(x => x.type + ' ' + (x.url || '').slice(0, 60))));
   if (!target) throw new Error('扩展未加载，终止');
 
   const evalIn = async (expression) => {
