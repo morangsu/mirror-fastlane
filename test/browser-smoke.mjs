@@ -105,7 +105,13 @@ try {
   let cdpLoadError = '';
   try {
     const r = await browser.call('Extensions.loadUnpacked', { path: EXT, keepAlive: true });
-    if (r && r.id) console.log('  已通过 CDP 加载扩展:', r.id);
+    if (r && r.id) {
+      console.log('  已通过 CDP 加载扩展:', r.id);
+      // MV3 的 service worker 不会自行启动：先开一次扩展页面，页面里的 sendMessage 会把它唤醒。
+      // （无头环境尤其如此，否则会一直看不到 chrome-extension:// 的 service_worker 目标）
+      await browser.call('Target.createTarget', { url: `chrome-extension://${r.id}/options/options.html` })
+        .catch(e => console.log('  唤醒页创建失败:', String(e && e.message || e).slice(0, 80)));
+    }
   } catch (e) {
     cdpLoadError = String((e && e.message) || e).slice(0, 120);
   }
