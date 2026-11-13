@@ -405,8 +405,10 @@ async function ensureApiPermission() {
   const origins = ['https://api.github.com/*'];
   let result = false;
   try {
-    if (await ext.permissions.contains({ origins })) result = true;
-    else result = await ext.permissions.request({ origins });
+    // 不要先 contains 再 request：Firefox 只要在 request 之前 await 过任何东西，
+    // 用户手势就丢了，request 会被直接拒绝（表现为「点了没反应/未获得授权」）。
+    // 已授予时 request 会立即返回 true 且不弹窗，所以省掉预检没有副作用。
+    result = await ext.permissions.request({ origins });
   } catch (e) {
     dbg('perm', 'api.github.com 授权异常', String(e && e.message ? e.message : e));
   }
@@ -416,6 +418,14 @@ async function ensureApiPermission() {
 
 async function toggleHashFlag(flag, el) {
   dbg('ui', '切换哈希开关 → ' + flag, { checked: el.checked });
+
+  // 必须放在任何 await 之前：Firefox 的 permissions.request 只认「当前用户手势」，
+  // 先 await 读一次 state 手势就丢了 —— 表现就是弹窗不出现、开关自己弹回去。
+  if (el.checked && !(await ensureApiPermission())) {
+    el.checked = false;
+    return toast('未获得 api.github.com 授权，取不到期望哈希');
+  }
+
   // 以后台的最新设置为基准。以前用页面里过期的 state 拼 patch，
   // 连续勾「启用」+「自动」时，第二次会把第一次的 enabled 覆盖成 false。
   let cur = { enabled: false, auto: false };
@@ -426,11 +436,6 @@ async function toggleHashFlag(flag, el) {
       state = s;
     }
   } catch { /* 拿不到就用页面上的值 */ }
-
-  if (el.checked && !(await ensureApiPermission())) {
-    el.checked = false;
-    return toast('未获得 api.github.com 授权，取不到期望哈希');
-  }
 
   const hash = Object.assign({}, cur, { [flag]: el.checked });
   dbg('ui', '哈希开关合并后的完整值', hash);
@@ -523,17 +528,23 @@ function rawShardOrigins() {
  * 可选 API 权限 webRequest（默认零权限，实测未授予时 chrome.webRequest 不存在）。
  * 缺镜像域名权限时，请求只有「发起」没有「结果」，统计会算不出失败率。
  */
+/** Firefox 有 runtime.getBrowserInfo，Chromium 没有 */
+function isFirefoxBrowser() {
+  try { return !!(ext.runtime && ext.runtime.getBrowserInfo); } catch { return false; }
+}
+
 async function requestRawBundle(originsOnly) {
   const origins = Array.from(new Set(originsOnly || ['https://raw.githubusercontent.com/*'].concat(rawShardOrigins())));
-  let hasWR = false;
-  try { hasWR = await ext.permissions.contains({ permissions: ['webRequest'] }); } catch { /* 不支持就算了 */ }
+  // 关键：request 之前不能有任何 await。Firefox 只认「当前用户手势」，
+  // 先 await 一次 permissions.contains 就会丢手势，弹窗不出现、开关自己弹回。
+  // Firefox 上也不申请 webRequest（可选 API 权限的运行时申请不可靠）：
+  // raw 加速只依赖 host 权限，统计在 Firefox 上降级为「无法观测」，不影响加速。
   const req = { origins };
-  if (!hasWR) req.permissions = ['webRequest'];
+  if (!isFirefoxBrowser()) req.permissions = ['webRequest'];
   try {
-    const ok = await ext.permissions.request(req);
-    return { ok, origins };
+    return { ok: await ext.permissions.request(req), origins };
   } catch {
-    // 有的浏览器不接受运行时申请 API 权限 → 只申请 host 权限，统计能力降级但不影响加速
+    // Chromium 上若整体申请被拒（例如 webRequest 不可选），退回只申请 host 权限
     try { return { ok: await ext.permissions.request({ origins }), origins }; }
     catch { return { ok: false, origins }; }
   }

@@ -27,6 +27,7 @@ const K = {
   rawReprobeAt: 'rawReprobeAt', // 上次因失败率触发重测的时间（冷却）
   rawUnknown: 'rawUnknown',     // 观测不到结果的次数（多半是镜像域名没授权）
   dlFailures: 'dlFailures',     // 真实下载失败计数（按 host）
+  removedBuiltin: 'removedBuiltin', // 用户手动删掉的内置镜像（host → ts），升级补齐时跳过
 };
 
 const PROBE_TIMEOUT_MS = 12000;
@@ -90,32 +91,64 @@ function mutateMirrors(fn) {
   return run;
 }
 
+/**
+ * 内置清单落盘。
+ * 以前只在「列表为空」时灌一次，结果老用户升级后永远停在安装时的快照
+ * （Edge 装了旧版就比 Firefox 新装少几条）。现在改为**补齐缺失项**：
+ *  - 已存在的 host 一律跳过（保留用户改名 / 停用 / 测速结果）
+ *  - 用户手动删过的内置镜像记在 removedBuiltin 墓碑里，不再复活
+ */
 async function seedMirrors() {
   // 走同一条队列：首次安装时用户可能已经打开设置页触发 refreshPermissions，
   // 直接 setMirrors 会与它互相覆盖。
   return mutateMirrors(async list => {
-    if (list.length) return undefined;
     let data;
     try {
       const r = await fetch(ext.runtime.getURL('data/builtin-mirrors.json'));
       data = await r.json();
     } catch {
-      data = { mirrors: [] };
+      return undefined;   // 读不到内置清单就什么都不做，绝不清空
     }
-    return (data.mirrors || []).map((m, i) => ({
-      id: MFL.idFromBase(m.base),
-      name: m.name || MFL.hostOf(m.base),
-      base: MFL.normalizeBase(m.base),
-      enabled: true,
-      source: 'builtin',
-      note: m.note || '',
-      seedKbps: m.seedKbps || 0,
-      healthy: true,
-      permitted: false,
-      stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
-      rawStats: { ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
-      score: 1 - i / 100,
-    }));
+    const builtin = (data.mirrors || [])
+      .map(m => ({ raw: m, base: MFL.normalizeBase(m.base) }))
+      .filter(x => !!x.base);
+    if (!builtin.length) return undefined;
+
+    const o = await ext.storage.local.get(K.removedBuiltin);
+    const removed = o[K.removedBuiltin] || {};
+    const builtinHosts = new Set(builtin.map(x => MFL.hostOf(x.base)));
+
+    // 清掉已经不在内置清单里的墓碑（清单更新后旧 host 不再需要记）
+    let tombChanged = false;
+    Object.keys(removed).forEach(h => {
+      if (!builtinHosts.has(h)) { delete removed[h]; tombChanged = true; }
+    });
+
+    const have = new Set(list.map(m => MFL.hostOf(m.base)));
+    const adds = [];
+    builtin.forEach(({ raw: m, base }) => {
+      const h = MFL.hostOf(base);
+      if (!h || have.has(h) || removed[h]) return;
+      have.add(h);
+      adds.push({
+        id: MFL.idFromBase(base),
+        name: m.name || h,
+        base,
+        enabled: true,
+        source: 'builtin',
+        note: m.note || '',
+        seedKbps: m.seedKbps || 0,
+        healthy: true,
+        permitted: false,
+        stats: { kbps: 0, ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
+        rawStats: { ttfb: 0, failures: 0, lastProbe: 0, lastError: '' },
+        score: 0,
+      });
+    });
+
+    if (tombChanged) await ext.storage.local.set({ [K.removedBuiltin]: removed });
+    dbg('seed', '内置清单补齐', { builtin: builtin.length, existing: list.length, added: adds.length });
+    return adds.length ? list.concat(adds) : undefined;
   });
 }
 
@@ -846,18 +879,28 @@ const handlers = {
       }]);
     });
     if (duplicate) return { ok: false, reason: 'duplicate' };
+    // 用户重新添加了之前删掉的内置镜像 → 清掉墓碑，避免下次补齐逻辑再跳过它
+    const h = MFL.hostOf(base);
+    const t = await ext.storage.local.get(K.removedBuiltin);
+    if (t[K.removedBuiltin] && t[K.removedBuiltin][h]) {
+      const tombs = Object.assign({}, t[K.removedBuiltin]);
+      delete tombs[h];
+      await ext.storage.local.set({ [K.removedBuiltin]: tombs });
+    }
     await applyRules();
     return { ok: true, state: await getState() };
   },
 
   'remove-mirror': async msg => {
     let removedHost = '';
+    let removedSource = '';
     await mutateMirrors(list => {
       // 优先按 base 精确匹配（id 由 host 派生，a-b.com 与 a.b.com 会撞车）；否则按 id 只删第一条
       let idx = msg.base ? list.findIndex(m => MFL.normalizeBase(m.base) === MFL.normalizeBase(msg.base)) : -1;
       if (idx < 0) idx = list.findIndex(m => m.id === msg.id);
       if (idx < 0) return undefined;
       removedHost = MFL.hostOf(list[idx].base);
+      removedSource = list[idx].source || '';
       return list.filter((_, i) => i !== idx);
     });
     // 顺手清掉这个 host 的缺失计时，避免 storage 里留无主记录
@@ -865,6 +908,13 @@ const handlers = {
       const o = await ext.storage.local.get(K.listMissing);
       const miss = o[K.listMissing] || {};
       if (miss[removedHost]) { delete miss[removedHost]; await ext.storage.local.set({ [K.listMissing]: miss }); }
+      // 内置镜像被手动删掉 → 记墓碑，升级/启动补齐时不要复活它
+      if (removedSource === 'builtin') {
+        const t = await ext.storage.local.get(K.removedBuiltin);
+        const tombs = t[K.removedBuiltin] || {};
+        tombs[removedHost] = Date.now();
+        await ext.storage.local.set({ [K.removedBuiltin]: tombs });
+      }
     }
     await applyRules();
     return { ok: true, state: await getState() };

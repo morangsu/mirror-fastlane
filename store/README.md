@@ -8,9 +8,9 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 
 | 用途 | 文件 |
 |---|---|
-| Edge 上架包 | `packages\mirror-fastlane-edge-1.4.9.zip`（79,177 B，SHA-256 `51a87803…`） |
-| Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.9.zip`（79,299 B，SHA-256 `9c53eb4f…`） |
-| AMO 源码包 | `packages\mirror-fastlane-source-1.4.9.zip`（215,611 B，SHA-256 `7dec68ea…`） |
+| Edge 上架包 | `packages\mirror-fastlane-edge-1.4.10.zip`（80,335 B，SHA-256 `b85a179b…`） |
+| Firefox 上架包 | `packages\mirror-fastlane-firefox-1.4.10.zip`（80,456 B，SHA-256 `606c20fe…`） |
+| AMO 源码包 | `packages\mirror-fastlane-source-1.4.10.zip`（217,426 B，SHA-256 `6a1bed5c…`） |
 
 完整哈希、体积、文件数与打包时的 commit 见 `packages\build-info.json`（由 `npm run pack` 生成）。
 | 商店 Logo 300×300 | `logo-300.png` |
@@ -24,8 +24,8 @@ Partner Center 左侧五个分页分别要填什么，对应的文件与文案�
 
 ## Packages 页
 
-- 上传 `packages\mirror-fastlane-edge-1.4.9.zip`
-- 上传后 Partner Center 会解析 manifest，确认显示为 `镜像快车道 / 1.4.9`
+- 上传 `packages\mirror-fastlane-edge-1.4.10.zip`
+- 上传后 Partner Center 会解析 manifest，确认显示为 `镜像快车道 / 1.4.10`
 - 若提示缺图，检查 zip 根目录是否有 `manifest.json`（本包是展开的，没有外层文件夹）
 
 ## Availability 页
@@ -87,7 +87,7 @@ npm run pack           # 只重新打三个 zip（不重拍截图），并写 bu
 | Tags | github, mirror, download, checksum |
 | Privacy policy | 同上的 privacy.md 链接 |
 | License | MIT |
-| 上传包 | `packages\mirror-fastlane-firefox-1.4.9.zip` |
+| 上传包 | `packages\mirror-fastlane-firefox-1.4.10.zip` |
 
 AMO 会问「是否使用构建工具」——回答是，构建命令 `node build.mjs`，源码在同仓库（无需额外上传源码包，但可在备注里写明）。
 Firefox 的扩展 ID 已定稿为 `mirror-fastlane@morangsu.github.io`，提交后不可更改。
@@ -99,6 +99,6 @@ Firefox 的扩展 ID 已定稿为 `mirror-fastlane@morangsu.github.io`，提交�
 - [ ] 文案里没有具体价格/承诺（避免"加速 10 倍"这类不可验证表述）
 - [ ] 隐私政策链接在无痕窗口能打开
 - [ ] zip 里没有 `store/`、`test/`、`hooks/` 等无关目录
-- [ ] `store/packages/build-info.json` 里的 SHA-256 与下表一致，commit 与 `v1.4.9` tag 对应
+- [ ] `store/packages/build-info.json` 里的 SHA-256 与下表一致，commit 与 `v1.4.10` tag 对应
 - [ ] 源码包不含 `dist/`、`store/`、`docs/`（内部设计/评审记录）、一次性探测脚本与本地归档
 - [ ] 上架包来自 `dist/edge` 或 `dist/firefox`，不是 `dist/debug`（后者 manifest 带 `debug:true`，仅本机排查用）

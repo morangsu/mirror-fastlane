@@ -251,6 +251,32 @@ try {
   ok('并发写入互不覆盖（慢写 + 快写都保留）',
     race.note === 'slow-write' && race.enabled === false, JSON.stringify(race));
 
+  /* 7c. 内置清单补齐：老用户升级能补到新条目，但手动删掉的不复活 */
+  const seedHeal = await evalIn(`(async () => {
+    const all = await getMirrors();
+    const b = all.find(m => m.source === 'builtin');
+    const before = all.length;
+    // 1) 模拟「装的时候只有旧清单」：直接删一条内置（不记墓碑）
+    await mutateMirrors(list => list.filter(m => m.id !== b.id));
+    const afterDel = (await getMirrors()).length;
+    await seedMirrors();
+    const afterSeed = (await getMirrors()).length;
+    const back = (await getMirrors()).some(m => m.id === b.id);
+    // 2) 走 handler 删除（会记墓碑）→ 补齐不应复活
+    await handlers['remove-mirror']({ id: b.id, base: b.base });
+    const afterTomb = (await getMirrors()).length;
+    await seedMirrors();
+    const stayed = !(await getMirrors()).some(m => m.id === b.id);
+    // 3) 清理墓碑并补齐，恢复原状
+    await chrome.storage.local.remove('removedBuiltin');
+    await seedMirrors();
+    const restored = (await getMirrors()).length;
+    return { before, afterDel, afterSeed, back, afterTomb, stayed, restored };
+  })()`);
+  ok('缺失的内置镜像会被补齐', seedHeal.afterSeed === seedHeal.before && seedHeal.back, JSON.stringify(seedHeal));
+  ok('用户手动删掉的内置镜像不会被补齐复活', seedHeal.stayed, JSON.stringify(seedHeal));
+  ok('清掉墓碑后清单恢复原条数', seedHeal.restored === seedHeal.before, JSON.stringify(seedHeal));
+
   /* 8. 设置页渲染 */
   await browser.call('Target.createTarget', { url: `chrome-extension://${extId}/options/options.html` });
   await sleep(1600);
