@@ -20,9 +20,9 @@ jobs:
     timeout-minutes: 15
     steps:
       # v7 起的官方 action 跑在 Node 24，与 setup-node 保持一致
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
 
@@ -45,7 +45,7 @@ jobs:
       # 扩展根本不会加载。Chrome for Testing 是官方给自动化用的构建，仍然允许命令行加载扩展。
       - name: 安装 Chrome for Testing
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1
         with:
           chrome-version: stable
 
