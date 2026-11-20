@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-19",
+  "updated": "2026-11-20",
   "note": "手工精选（无 auto 字段）永不删；其余条目整段由 git.mxg.pub 的当前 success 覆盖（auto:true），源撤下即消失。",
   "mirrors": [
     {
@@ -64,11 +64,6 @@
       "auto": true
     },
     {
-      "name": "ghproxy.net",
-      "base": "https://ghproxy.net",
-      "auto": true
-    },
-    {
       "name": "gh-proxy.net",
       "base": "https://gh-proxy.net",
       "auto": true
@@ -76,6 +71,11 @@
     {
       "name": "fastgit.cc",
       "base": "https://fastgit.cc",
+      "auto": true
+    },
+    {
+      "name": "blfrp.cn",
+      "base": "https://g.blfrp.cn",
       "auto": true
     },
     {
